@@ -1,5 +1,23 @@
 import unittest
 from unittest.mock import MagicMock, patch
+import sys
+import os
+
+# --- MOCK DEPENDENCIES BEFORE IMPORTING BRAIN ---
+sys.modules['pandas'] = MagicMock()
+sys.modules['google'] = MagicMock()
+sys.modules['google.auth'] = MagicMock()
+sys.modules['googleapiclient'] = MagicMock()
+sys.modules['googleapiclient.discovery'] = MagicMock()
+sys.modules['google.cloud'] = MagicMock()
+sys.modules['google.cloud.firestore'] = MagicMock()
+sys.modules['langchain_google_vertexai'] = MagicMock()
+sys.modules['langchain_experimental'] = MagicMock()
+sys.modules['langchain_experimental.agents'] = MagicMock()
+
+# Ensure we can import brain
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import brain
 import datetime
 
