@@ -16,9 +16,28 @@ def send_whatsapp(phone, text):
             "to": phone,
             "text": {"body": text}
         }
-        requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
     except Exception as e:
         config.logger.error(f"Error enviando WhatsApp: {e}")
+
+def mark_as_read(message_id):
+    """Marca el mensaje como leído en WhatsApp."""
+    try:
+        url = f"https://graph.facebook.com/v21.0/{config.PHONE_NUMBER_ID}/messages"
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        config.logger.error(f"Error marcando mensaje como leído: {e}")
 
 @functions_framework.http
 def whatsapp_webhook(request):
@@ -41,6 +60,10 @@ def whatsapp_webhook(request):
             if 'messages' in value:
                 msg = value['messages'][0]
                 phone = msg['from']
+
+                # Marcar como leído inmediatamente para evitar sensación de "colgado"
+                if 'id' in msg:
+                    mark_as_read(msg['id'])
                 
                 # Extracción de texto segura
                 text = ""
