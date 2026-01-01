@@ -22,18 +22,22 @@ def _init_services():
     try:
         config.logger.info("🔌 Conectando servicios...")
         
+        # --- CAMBIO IMPORTANTE: Forzamos la ubicación a 'us-central1' ---
+        # Gemini 2.0 y 1.5 a veces no están en todas las regiones de Europa.
+        # Al poner 'us-central1' aquí, aseguramos que siempre encuentre el modelo.
+
         # Temperatura 0 es VITAL para evitar alucinaciones de formato
         llm = ChatVertexAI(
             model_name="gemini-2.0-flash-001",
             project=config.PROJECT_ID,
-            location=config.LOCATION,
+            location="us-central1", # <--- CAMBIADO (Antes era config.LOCATION)
             temperature=0.0, 
         )
 
         _safety_model = ChatVertexAI(
             model_name="gemini-1.5-flash-001",
             project=config.PROJECT_ID,
-            location=config.LOCATION,
+            location="us-central1", # <--- CAMBIADO (Antes era config.LOCATION)
             temperature=0.0,
         )
         
