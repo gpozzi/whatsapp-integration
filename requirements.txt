@@ -1,4 +1,4 @@
-functions-framework==3.*
+functions-framework
 google-cloud-firestore
 google-auth
 google-api-python-client
@@ -9,3 +9,4 @@ langchain-google-vertexai
 langchain-experimental
 langchain-core
 langsmith
+gunicorn
