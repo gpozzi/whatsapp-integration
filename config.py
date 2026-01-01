@@ -17,6 +17,19 @@ LOCATION = os.environ.get("LOCATION", "us-central1")
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "(default)")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 
+# --- VALIDACIÓN DE LANGSMITH ---
+# Si el tracing está activo pero no hay API Key válida, lo desactivamos para evitar errores 401.
+if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
+    _api_key = os.environ.get("LANGCHAIN_API_KEY")
+    if not _api_key:
+        logger.warning("⚠️ LANGCHAIN_TRACING_V2 está activo pero falta LANGCHAIN_API_KEY.")
+        logger.warning("🚫 Desactivando tracing para evitar errores de conexión.")
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    elif not _api_key.startswith("ls"):
+        logger.warning("⚠️ LANGCHAIN_API_KEY no parece válida (debe empezar con 'ls').")
+        logger.warning("🚫 Desactivando tracing para evitar errores de conexión.")
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+
 # --- PROMPTS DEL SISTEMA (VERSIÓN ANTI-LOOP) ---
 SALES_AGENT_PREFIX = """
 ERES 'AUTOBOT', UN ASISTENTE DE VENTAS EXPERTO EN AUTOS.
