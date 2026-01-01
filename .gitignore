@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Google Cloud
+gcp-key.json
+*.json
+key.json
+secrets/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
