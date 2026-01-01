@@ -62,8 +62,9 @@ def whatsapp_webhook(request):
                 phone = msg['from']
 
                 # Marcar como leído inmediatamente para evitar sensación de "colgado"
-                if 'id' in msg:
-                    mark_as_read(msg['id'])
+                message_id = msg.get('id')
+                if message_id:
+                    mark_as_read(message_id)
                 
                 # Extracción de texto segura
                 text = ""
@@ -82,8 +83,11 @@ def whatsapp_webhook(request):
                     return "OK", 200
 
                 # --- LLAMADA AL CEREBRO ---
-                response = brain.process_message(text, phone)
-                send_whatsapp(phone, response)
+                response = brain.process_message(text, phone, message_id)
+                if response:
+                    send_whatsapp(phone, response)
+                else:
+                    config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
                 
             return "OK", 200
 

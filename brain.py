@@ -116,9 +116,31 @@ def _audit_response(candidate_text):
         return True
     except: return True
 
-def process_message(user_text, phone_number):
+def _check_is_duplicate(message_id):
+    """Verifica si el mensaje ya fue procesado para evitar bucles de reintentos."""
+    if not message_id or not _db_client: return False
+
+    doc_ref = _db_client.collection("processed_messages").document(message_id)
+    try:
+        if doc_ref.get().exists:
+            return True
+
+        doc_ref.set({
+            "timestamp": firestore.SERVER_TIMESTAMP,
+            "status": "processing"
+        })
+        return False
+    except Exception as e:
+        config.logger.error(f"Error checking duplicate: {e}")
+        return False
+
+def process_message(user_text, phone_number, message_id=None):
     primary_model = _init_services()
     
+    # --- DEDUPLICACIÓN ---
+    if _check_is_duplicate(message_id):
+        return None
+
     if _df_inventory is None:
         if not _load_inventory(primary_model):
             return "El sistema se está reiniciando, dame un minuto..."
