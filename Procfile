@@ -1,0 +1,1 @@
+web: functions-framework --target=whatsapp_webhook
