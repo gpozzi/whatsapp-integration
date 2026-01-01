@@ -28,14 +28,14 @@ def _init_services():
 
         # Temperatura 0 es VITAL para evitar alucinaciones de formato
         llm = ChatVertexAI(
-            model_name="gemini-2.0-flash-001",
+            model_name="gemini-2.5-flash",
             project=config.PROJECT_ID,
             location="us-central1", # <--- CAMBIADO (Antes era config.LOCATION)
             temperature=0.0, 
         )
 
         _safety_model = ChatVertexAI(
-            model_name="gemini-1.5-flash-001",
+            model_name="gemini-2.5-flash",
             project=config.PROJECT_ID,
             location="us-central1", # <--- CAMBIADO (Antes era config.LOCATION)
             temperature=0.0,
