@@ -10,6 +10,10 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Mock brain ONLY to isolate main logic and avoid brain's complex deps
+mock_ff = MagicMock()
+mock_ff.http.side_effect = lambda f: f
+sys.modules['functions_framework'] = mock_ff
+sys.modules['requests'] = MagicMock()
 sys.modules['brain'] = MagicMock()
 sys.modules['config'] = MagicMock()
 sys.modules['config'].PHONE_NUMBER_ID = "123"
@@ -18,9 +22,12 @@ sys.modules['config'].VERIFY_TOKEN = "verify"
 sys.modules['config'].logger = MagicMock()
 
 import main
+import importlib
 
 class TestMainTimestamp(unittest.TestCase):
     def setUp(self):
+        # Reload main to ensure it uses the mocked brain
+        importlib.reload(main)
         main.brain.reset_mock()
 
     def test_old_message_ignored(self):

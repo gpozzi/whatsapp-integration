@@ -104,7 +104,7 @@ def _load_inventory(llm_model: ChatVertexAI) -> bool:
             verbose=True,
             allow_dangerous_code=True,
             prefix=config.SALES_AGENT_PREFIX,
-            handle_parsing_errors=True,
+            agent_executor_kwargs={"handle_parsing_errors": True},
             max_iterations=4,
         )
         config.logger.info(f"✅ Inventario cargado: {len(_df_inventory)} autos.")
