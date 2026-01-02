@@ -134,8 +134,28 @@ def whatsapp_webhook(request):
     if request.method == "POST":
         try:
             data = request.get_json()
-            entry = data.get('entry', [])[0]
-            changes = entry.get('changes', [])[0]
+
+            # Handle Pub/Sub wrapped message
+            if data and 'message' in data and 'data' in data['message']:
+                try:
+                    decoded_data = base64.b64decode(data['message']['data']).decode('utf-8')
+                    data = json.loads(decoded_data)
+                except Exception as e:
+                    config.logger.error(f"Error decoding Pub/Sub message: {e}")
+                    return "Bad Request", 400
+
+            entries = data.get('entry', [])
+            if not entries:
+                config.logger.info("Webhook recibido sin 'entry'.")
+                return "OK", 200
+
+            entry = entries[0]
+            changes_list = entry.get('changes', [])
+            if not changes_list:
+                config.logger.info("Webhook recibido sin 'changes'.")
+                return "OK", 200
+
+            changes = changes_list[0]
             value = changes.get('value', {})
             
             if 'messages' in value:
