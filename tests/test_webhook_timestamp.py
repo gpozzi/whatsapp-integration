@@ -14,9 +14,12 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 mock_ff = MagicMock()
 mock_ff.http.side_effect = lambda f: f
 sys.modules['functions_framework'] = mock_ff
-sys.modules['requests'] = MagicMock()
-# DO NOT mock 'brain' here globally, as it breaks other tests that need real brain module.
-# sys.modules['brain'] = MagicMock()
+
+# CAUTION: We should not mock 'requests' entire package if libraries need it.
+# Instead of mocking requests, we can patch it inside the test methods if needed.
+# But main.py imports requests.
+# If we mock sys.modules['requests'], it breaks other libs like requests_toolbelt.
+# So we remove: sys.modules['requests'] = MagicMock()
 
 sys.modules['config'] = MagicMock()
 sys.modules['config'].PHONE_NUMBER_ID = "123"
@@ -30,14 +33,7 @@ mock_pubsub = MagicMock()
 sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
 
-# Import main (will use real brain if available, or fail if deps missing)
-# To avoid failure if real brain deps are missing/mocked inconsistently,
-# we might need to mock brain's deps or mock brain in sys.modules TEMPORARILY.
-# But simpler: assume dependencies are mocked enough or present.
-# Since we mock google.cloud, brain import might succeed if it only imports that.
-# brain imports pandas, langchain, etc.
-# We should mock those too if we want to import main safely without real env.
-
+# Mock heavy deps
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
