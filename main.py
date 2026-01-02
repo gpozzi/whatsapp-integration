@@ -107,6 +107,7 @@ def whatsapp_webhook(request):
                 # Extracción de texto segura y Multimedia
                 text = ""
                 image_data = None
+                audio_data = None
 
                 if msg['type'] == 'text':
                     text = msg['text']['body']
@@ -120,6 +121,16 @@ def whatsapp_webhook(request):
                     media_url = get_media_url(media_id)
                     if media_url:
                         image_data = download_media(media_url)
+                elif msg['type'] == 'audio':
+                    media_id = msg['audio']['id']
+
+                    # Descargar audio
+                    media_url = get_media_url(media_id)
+                    if media_url:
+                        audio_data = download_media(media_url)
+
+                    if not audio_data:
+                        text = "[Audio no descargado]"
                 else:
                     text = "[Multimedia no soportado]"
 
@@ -135,9 +146,21 @@ def whatsapp_webhook(request):
                     return "OK", 200
 
                 # --- LLAMADA AL CEREBRO ---
-                response = brain.process_message(text, phone, message_id, image_data=image_data)
+                # Pasamos audio_data si existe
+                response = brain.process_message(text, phone, message_id, image_data=image_data, audio_data=audio_data)
+
                 if response:
-                    send_whatsapp(phone, response)
+                    # Si la respuesta es bytes, asumimos que es Audio (MP3)
+                    if isinstance(response, bytes):
+                        # Subir y enviar audio
+                        media_id = upload_media_to_whatsapp(response, "audio/mpeg")
+                        if media_id:
+                            send_whatsapp_audio(phone, media_id)
+                        else:
+                            send_whatsapp(phone, "Tuve un problema generando mi respuesta de voz. 🎤")
+                    else:
+                        # Respuesta texto normal
+                        send_whatsapp(phone, response)
                 else:
                     config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
                 
@@ -146,3 +169,40 @@ def whatsapp_webhook(request):
         except Exception as e:
             config.logger.error(f"Error en Webhook: {e}", exc_info=True)
             return "Error", 500
+
+def upload_media_to_whatsapp(media_bytes, mime_type):
+    """Sube un archivo multimedia a WhatsApp y devuelve el ID."""
+    try:
+        url = f"https://graph.facebook.com/v21.0/{config.PHONE_NUMBER_ID}/media"
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}"
+        }
+        files = {
+            'file': ('audio.mp3', media_bytes, mime_type),
+            'messaging_product': (None, 'whatsapp')
+        }
+        response = requests.post(url, headers=headers, files=files, timeout=30)
+        response.raise_for_status()
+        return response.json().get('id')
+    except Exception as e:
+        config.logger.error(f"Error subiendo media a WhatsApp: {e}")
+        return None
+
+def send_whatsapp_audio(phone, media_id):
+    """Envía un mensaje de audio a WhatsApp."""
+    try:
+        url = f"https://graph.facebook.com/v21.0/{config.PHONE_NUMBER_ID}/messages"
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "audio",
+            "audio": {"id": media_id}
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        config.logger.error(f"Error enviando Audio WhatsApp: {e}")

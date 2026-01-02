@@ -17,6 +17,11 @@ LOCATION = os.environ.get("LOCATION", "us-central1")
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "(default)")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 
+# --- AUDIO & VOICE SETTINGS ---
+# Voces Estándar de Google Cloud TTS (Neural2 para mejor calidad)
+TTS_VOICE_MALE = "es-US-Neural2-B"
+TTS_VOICE_FEMALE = "es-US-Neural2-A"
+
 # --- VALIDACIÓN DE LANGSMITH ---
 # Si el tracing está activo pero no hay API Key válida, lo desactivamos para evitar errores 401.
 if os.environ.get("LANGCHAIN_TRACING_V2") == "true":
