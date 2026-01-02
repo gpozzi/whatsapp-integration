@@ -1,8 +1,17 @@
 
 import unittest
+import sys
 from unittest.mock import patch, MagicMock
+
+# Mock functions_framework and requests
+mock_ff = MagicMock()
+mock_ff.http.side_effect = lambda f: f
+sys.modules['functions_framework'] = mock_ff
+sys.modules['requests'] = MagicMock()
+
 import main
 import json
+import time
 
 class TestSecurity(unittest.TestCase):
 
@@ -24,6 +33,7 @@ class TestSecurity(unittest.TestCase):
                         "messages": [{
                             "from": "123456789",
                             "type": "text",
+                            "timestamp": str(int(time.time())),
                             "text": {"body": large_text}
                         }]
                     }
@@ -44,7 +54,7 @@ class TestSecurity(unittest.TestCase):
 
         # Check if brain.process_message was called with TRUNCATED text
         expected_text = "A" * 1000 + "..."
-        mock_brain.process_message.assert_called_with(expected_text, "123456789")
+        mock_brain.process_message.assert_called_with(expected_text, "123456789", None)
 
     @patch('main.requests')
     @patch('main.config')
