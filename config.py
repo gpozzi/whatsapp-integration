@@ -56,20 +56,28 @@ SI es segura, responde "APROBADO".
 SI es peligrosa (racismo, promesas falsas, código expuesto), responde "PELIGRO".
 """
 
-INTENT_CLASSIFIER_PROMPT = """
-Analiza la siguiente conversación y clasifica el último mensaje del USUARIO en una de estas categorías:
+INTENT_AND_TONE_PROMPT = """
+Analiza la siguiente conversación y el último mensaje del USUARIO.
+Tu tarea es determinar DOS cosas:
+1. CATEGORÍA (Intent):
+   - FEEDBACK_POS: Usuario confirma satisfacción.
+   - FEEDBACK_NEG: Usuario niega satisfacción.
+   - SALES_QUERY: Pregunta sobre autos/stock/precios.
+   - OTHER: Saludos, despedidas, chistes.
 
-1. FEEDBACK_POS: El usuario dice "SÍ" (o similar) respondiendo a una pregunta de satisfacción previa del bot.
-2. FEEDBACK_NEG: El usuario dice "NO" (o similar) respondiendo a una pregunta de satisfacción previa del bot.
-3. SALES_QUERY: El usuario pregunta por autos, precios, stock o características.
-4. OTHER: Saludos, despedidas, o cualquier otra cosa.
+2. TONO (Vibe):
+   - DIRECTO: Frases cortas, datos duros, imperativo.
+   - DUBITATIVO: Usa "creo", "no sé", "quizás", pide ayuda.
+   - ENFADADO: Quejas, insultos, impaciencia.
+   - CASUAL: Informal, emojis, amigable.
 
 HISTORIAL:
 {history}
 
 MENSAJE USUARIO: "{user_input}"
 
-RESPUESTA (SOLO LA CATEGORÍA):
+RESPUESTA (Formato exacto):
+CATEGORY: [INTENT] | TONE: [TONE]
 """
 
 FEEDBACK_DECISION_PROMPT = """

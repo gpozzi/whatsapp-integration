@@ -34,7 +34,8 @@ class TestSecurity(unittest.TestCase):
                             "from": "123456789",
                             "type": "text",
                             "timestamp": str(int(time.time())),
-                            "text": {"body": large_text}
+                            "text": {"body": large_text},
+                            "id": "msg_id_1"
                         }]
                     }
                 }]
@@ -54,7 +55,8 @@ class TestSecurity(unittest.TestCase):
 
         # Check if brain.process_message was called with TRUNCATED text
         expected_text = "A" * 1000 + "..."
-        mock_brain.process_message.assert_called_with(expected_text, "123456789", None)
+        # Updated assertion to include image_data=None
+        mock_brain.process_message.assert_called_with(expected_text, "123456789", "msg_id_1", image_data=None)
 
     @patch('main.requests')
     @patch('main.config')
