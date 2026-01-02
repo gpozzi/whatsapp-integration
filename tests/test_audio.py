@@ -57,6 +57,32 @@ class TestAudioFeatures(unittest.TestCase):
         audio_bytes = b"fake_audio_bytes"
         result = brain._analyze_audio(audio_bytes)
 
+        # Verify calls
+        # Check that HumanMessage was initialized with correct content
+        # Because HumanMessage is a Mock class, we check its constructor call args
+        call_args = brain.HumanMessage.call_args
+        self.assertIsNotNone(call_args, "HumanMessage should have been instantiated")
+
+        kwargs = call_args[1]
+        content_list = kwargs.get('content')
+
+        # If not passed as kwarg, check positional args
+        if not content_list and call_args[0]:
+            content_list = call_args[0][0]
+
+        self.assertIsNotNone(content_list, "HumanMessage instantiated without content")
+        self.assertEqual(len(content_list), 2)
+
+        text_part = content_list[0]
+        file_part = content_list[1]
+
+        self.assertEqual(text_part["type"], "text")
+        self.assertEqual(file_part["type"], "file")
+        self.assertEqual(file_part["mime_type"], "audio/ogg")
+        # Ensure base64 encoding happened
+        expected_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        self.assertEqual(file_part["base64"], expected_b64)
+
         self.assertEqual(result["text"], "Hola busco un auto")
         self.assertEqual(result["gender"], "MALE")
 

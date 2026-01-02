@@ -681,19 +681,12 @@ def _analyze_audio(audio_bytes: bytes) -> dict:
                             "{\"text\": \"...\", \"gender\": \"...\"}"
                 },
                 {
-                    "type": "image_url", # LangChain usa 'image_url' como contenedor genérico de media en algunas versiones, pero lo correcto es media si está soportado.
-                                         # Dado que no sabemos la versión exacta de langchain-google-vertexai, intentaremos el formato standard de URL de datos.
-                                         # Si falla, el fallback es STT standard, pero el requisito pedía usar Gemini.
-                                         # Nota: 'image_url' con mime type audio podría funcionar o ser ignorado.
-                                         # Vamos a asumir que Gemini Flash lo acepta via data URI con mime audio/ogg o audio/mpeg.
-                    "image_url": {"url": f"data:audio/ogg;base64,{b64_audio}"}
+                    "type": "file",
+                    "mime_type": "audio/ogg",
+                    "base64": b64_audio
                 }
             ]
         )
-
-        # Nota técnica: Si la librería de LangChain instalada valida estrictamente "image_url" como imagen, esto podría fallar.
-        # Alternativa robusta: Usar vertexai SDK directamente. Pero probemos primero.
-        # Si falla en ejecución (logs), corregiremos.
 
         response = _safety_model.invoke([message]).content.strip()
 
