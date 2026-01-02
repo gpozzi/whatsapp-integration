@@ -1,6 +1,7 @@
 import unittest
 import sys
 from unittest.mock import patch, MagicMock
+import ast
 
 # --- MOCK HEAVY DEPENDENCIES BEFORE IMPORTS ---
 sys.modules['google'] = MagicMock()
@@ -13,13 +14,13 @@ sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
 # Mock module where PythonAstREPLTool resides
 sys.modules['functions_framework'] = MagicMock()
-sys.modules['requests'] = MagicMock()
+# sys.modules['requests'] = MagicMock() # DO NOT mock requests if we want to test import validity
 
 # Ensure functions_framework.http decorator works
 sys.modules['functions_framework'].http = lambda f: f
 
 import main
-import security # Importamos el módulo de seguridad real
+import security
 import json
 import time
 
@@ -80,6 +81,12 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("'sys'", prefix)
         self.assertIn("SOLO puedes usar 'pandas', 'numpy'", prefix)
         self.assertIn("NUNCA intentes leer variables de entorno", prefix)
+
+    def test_validate_python_code_blocks_requests(self):
+        """Verify that validate_python_code raises SecurityError for requests import."""
+        code = "import requests"
+        with self.assertRaises(security.SecurityError):
+            security.validate_python_code(code)
 
     def test_validate_python_code_blocks_dangerous_imports(self):
         """Verify that validate_python_code raises SecurityError for dangerous imports."""

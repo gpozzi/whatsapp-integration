@@ -27,7 +27,7 @@ def validate_python_code(code: str) -> None:
     unsafe_modules = {
         'os', 'sys', 'subprocess', 'platform', 'shutil',
         'importlib', 'builtins', 'socket', 'urllib', 'http',
-        'pickle', 'base64'
+        'pickle', 'base64', 'requests'
     }
 
     for node in ast.walk(tree):
