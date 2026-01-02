@@ -24,6 +24,7 @@ MODEL_SAFETY = "gemini-2.5-flash-lite"
 MODEL_LOCATION = "us-central1"
 MODEL_TEMP = 0.0
 CONTEXT_CHAR_LIMIT = 4000
+CONTEXT_TIMEOUT_HOURS = 6
 BAD_WORDS = ["Error", "Processing", "Agent stopped"]
 
 def _init_services() -> ChatVertexAI:
@@ -144,9 +145,26 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
     try:
         doc = doc_ref.get()
         if doc.exists:
-            raw = doc.to_dict().get('mensajes', [])
-            # Validación básica para asegurar lista de cadenas
-            history_list = [m for m in raw if isinstance(m, str)]
+            data = doc.to_dict()
+            raw = data.get('mensajes', [])
+            stored_ts = data.get('timestamp')
+
+            # Verificar caducidad del contexto (TTL)
+            is_expired = False
+            if stored_ts:
+                now = datetime.datetime.now(datetime.timezone.utc)
+                # Manejar compatibilidad de zonas horarias si Firestore devuelve naive o aware
+                if stored_ts.tzinfo is None:
+                    stored_ts = stored_ts.replace(tzinfo=datetime.timezone.utc)
+
+                if (now - stored_ts) > datetime.timedelta(hours=CONTEXT_TIMEOUT_HOURS):
+                    is_expired = True
+                    config.logger.info(f"🧹 Contexto expirado para {phone}. Reiniciando conversación.")
+
+            if not is_expired:
+                # Validación básica para asegurar lista de cadenas
+                history_list = [m for m in raw if isinstance(m, str)]
+
     except Exception as e:
         config.logger.warning(f"Error leyendo historial: {e}")
 
