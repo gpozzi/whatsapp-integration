@@ -681,7 +681,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         _manage_history(phone_number, user_text, final_text)
 
         # SI LA ENTRADA FUE AUDIO -> SALIDA AUDIO
-        if audio_data and detected_gender:
+        # Solicitud específica: Si es mujer, RESPONDER SOLO TEXTO.
+        if audio_data and detected_gender == "MALE":
             audio_response = _text_to_speech(final_text, detected_gender)
             if audio_response:
                 return audio_response
