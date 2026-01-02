@@ -6,8 +6,9 @@ requests
 pandas
 tabulate
 langchain-google-vertexai
-langchain-experimental
+langchain-experimental==0.3.2
 langchain-core
 langsmith
 gunicorn
 google-cloud-texttospeech
+google-cloud-pubsub

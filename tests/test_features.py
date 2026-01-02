@@ -19,6 +19,7 @@ sys.modules["langchain_core"] = MagicMock()
 sys.modules["langchain_core.messages"] = MagicMock()
 sys.modules["langchain_experimental"] = MagicMock()
 sys.modules["langchain_experimental.agents"] = MagicMock()
+sys.modules["langchain_experimental.tools.python.tool"] = MagicMock()
 sys.modules["pandas"] = MagicMock()
 
 # --- IMPORT APP ---

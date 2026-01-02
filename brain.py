@@ -13,8 +13,10 @@ import base64
 # AI Integrations
 from langchain_google_vertexai import ChatVertexAI
 from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_experimental.tools.python.tool import PythonAstREPLTool
 from langchain_core.messages import HumanMessage
 import config
+from security import validate_python_code, SecurityError
 
 # --- ESTADO GLOBAL ---
 _db_client: Optional[firestore.Client] = None
@@ -30,6 +32,26 @@ MODEL_TEMP = 0.0
 CONTEXT_CHAR_LIMIT = 4000
 CONTEXT_TIMEOUT_HOURS = 6
 BAD_WORDS = ["Error", "Processing", "Agent stopped"]
+
+class SafePythonAstREPLTool(PythonAstREPLTool):
+    """Herramienta de ejecución de Python con validación de seguridad (AST)."""
+
+    name: str = "python_repl_ast"
+    description: str = (
+        "A Python shell. Use this to execute python commands. "
+        "Input should be a valid python command. "
+        "When using this tool, sometimes output is abbreviated - "
+        "make sure it does not look abbreviated before using it in your answer."
+    )
+
+    def _run(self, query: str, run_manager=None) -> str:
+        try:
+            validate_python_code(query)
+            return super()._run(query, run_manager=run_manager)
+        except SecurityError as e:
+            return f"SecurityError: {str(e)}"
+        except Exception as e:
+            return f"Error: {str(e)}"
 
 def _init_services() -> ChatVertexAI:
     """Inicializa los servicios de Google Cloud y los modelos de IA.
@@ -712,9 +734,15 @@ def _analyze_audio(audio_bytes: bytes) -> dict:
         response = response.replace("```json", "").replace("```", "").strip()
         data = json.loads(response)
 
+        # Normalizar género
+        raw_gender = data.get("gender", "FEMALE").upper()
+        gender = "FEMALE"
+        if "MALE" in raw_gender or "HOMBRE" in raw_gender:
+            gender = "MALE"
+
         return {
             "text": data.get("text", ""),
-            "gender": data.get("gender", "FEMALE").upper()
+            "gender": gender
         }
 
     except Exception as e:
@@ -722,7 +750,7 @@ def _analyze_audio(audio_bytes: bytes) -> dict:
         return {"text": "", "gender": "FEMALE"}
 
 def _text_to_speech(text: str, gender: str) -> Optional[bytes]:
-    """Convierte texto a audio usando Google Cloud TTS.
+    """Convierte texto a audio usando Google Cloud TTS con fallback.
 
     Args:
         text (str): El texto a convertir.
@@ -735,23 +763,35 @@ def _text_to_speech(text: str, gender: str) -> Optional[bytes]:
         client = texttospeech.TextToSpeechClient()
         input_text = texttospeech.SynthesisInput(text=text)
 
+        # 1. Intento Principal (Voces Neurales)
         voice_name = config.TTS_VOICE_MALE if gender == "MALE" else config.TTS_VOICE_FEMALE
 
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="es-US",
-            name=voice_name
-        )
+        try:
+            voice = texttospeech.VoiceSelectionParams(
+                language_code="es-US",
+                name=voice_name
+            )
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            )
+            response = client.synthesize_speech(
+                input=input_text, voice=voice, audio_config=audio_config
+            )
+            return response.audio_content
+        except Exception as e:
+            config.logger.warning(f"⚠️ TTS Neural falló: {e}. Intentando fallback estándar.")
 
-        audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.MP3
-        )
-
-        response = client.synthesize_speech(
-            input=input_text, voice=voice, audio_config=audio_config
-        )
-
-        return response.audio_content
+            # 2. Intento Fallback (Voces Estándar)
+            fallback_voice = "es-US-Standard-B" if gender == "MALE" else "es-US-Standard-A"
+            voice = texttospeech.VoiceSelectionParams(
+                language_code="es-US",
+                name=fallback_voice
+            )
+            response = client.synthesize_speech(
+                input=input_text, voice=voice, audio_config=audio_config
+            )
+            return response.audio_content
 
     except Exception as e:
-        config.logger.error(f"Error en TTS: {e}")
+        config.logger.error(f"❌ Error fatal en TTS: {e}")
         return None

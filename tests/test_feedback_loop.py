@@ -14,6 +14,7 @@ mock_modules = [
     "langchain_google_vertexai",
     "langchain_experimental",
     "langchain_experimental.agents",
+    "langchain_experimental.tools.python.tool",
     "langchain_core",
     "langchain_core.messages"
 ]

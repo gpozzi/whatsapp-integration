@@ -26,6 +26,7 @@ sys.modules["langchain_core"] = mock_langchain_core
 sys.modules["langchain_core.messages"] = mock_langchain_core
 sys.modules["langchain_experimental"] = mock_langchain_experimental
 sys.modules["langchain_experimental.agents"] = mock_langchain_experimental
+sys.modules["langchain_experimental.tools.python.tool"] = MagicMock()
 
 import brain
 import config
