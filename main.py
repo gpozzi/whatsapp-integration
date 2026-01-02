@@ -1,8 +1,20 @@
 import functions_framework
 import requests
 import time
+import json
+import base64
+from google.cloud import pubsub_v1
 import config
-import brain  # Importamos nuestro módulo de lógica
+import brain
+
+# Publisher Client (Global to reuse connection)
+try:
+    publisher = pubsub_v1.PublisherClient()
+except Exception as e:
+    config.logger.warning(f"Could not initialize PublisherClient (Local env?): {e}")
+    publisher = None
+
+# --- Helper Functions (Shared) ---
 
 def send_whatsapp(phone, text):
     """Envío 'low-level' a la API de WhatsApp."""
@@ -67,109 +79,6 @@ def download_media(media_url):
         config.logger.error(f"Error descargando media: {e}")
         return None
 
-@functions_framework.http
-def whatsapp_webhook(request):
-    """Entry Point de Google Cloud Functions."""
-    
-    # 1. Verificación (Handshake con Meta)
-    if request.method == "GET":
-        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
-            return request.args.get("hub.challenge"), 200
-        return "Forbidden", 403
-
-    # 2. Recepción de Mensajes
-    if request.method == "POST":
-        try:
-            data = request.get_json()
-            entry = data.get('entry', [])[0]
-            changes = entry.get('changes', [])[0]
-            value = changes.get('value', {})
-            
-            if 'messages' in value:
-                msg = value['messages'][0]
-                phone = msg['from']
-
-                # Verificar antigüedad del mensaje (evitar procesar reintentos de hace horas)
-                # Timestamp de WhatsApp viene en segundos (str)
-                msg_ts = int(msg.get('timestamp', 0))
-                now_ts = int(time.time())
-
-                # Si el mensaje tiene más de 5 minutos de antigüedad, lo ignoramos (retornando 200 para frenar el reintento)
-                if now_ts - msg_ts > 300:
-                    config.logger.warning(f"⏳ Mensaje descartado por antigüedad ({now_ts - msg_ts}s). ID: {msg.get('id')}")
-                    return "OK", 200
-
-                # Marcar como leído inmediatamente para evitar sensación de "colgado"
-                message_id = msg.get('id')
-                if message_id:
-                    mark_as_read(message_id)
-                
-                # Extracción de texto segura y Multimedia
-                text = ""
-                image_data = None
-                audio_data = None
-
-                if msg['type'] == 'text':
-                    text = msg['text']['body']
-                elif msg['type'] == 'interactive':
-                    text = msg['interactive']['button_reply']['title']
-                elif msg['type'] == 'image':
-                    text = msg['image'].get('caption', "")  # Usar el caption como texto si existe
-                    media_id = msg['image']['id']
-
-                    # Descargar imagen
-                    media_url = get_media_url(media_id)
-                    if media_url:
-                        image_data = download_media(media_url)
-                elif msg['type'] == 'audio':
-                    media_id = msg['audio']['id']
-
-                    # Descargar audio
-                    media_url = get_media_url(media_id)
-                    if media_url:
-                        audio_data = download_media(media_url)
-
-                    if not audio_data:
-                        text = "[Audio no descargado]"
-                else:
-                    text = "[Multimedia no soportado]"
-
-                # Security enhancement: Input length validation
-                if text and len(text) > 1000:
-                    text = text[:1000] + "..."
-                
-                # Lógica de Reset manual
-                if text and "reset" in text.lower():
-                    # Usamos una función privada del brain solo para borrar
-                    brain._manage_history(phone, clear=True)
-                    send_whatsapp(phone, "♻️ Memoria reiniciada.")
-                    return "OK", 200
-
-                # --- LLAMADA AL CEREBRO ---
-                # Pasamos audio_data si existe
-                response = brain.process_message(text, phone, message_id, image_data=image_data, audio_data=audio_data)
-
-                if response:
-                    # Si la respuesta es bytes, asumimos que es Audio (MP3)
-                    if isinstance(response, bytes):
-                        # Subir y enviar audio
-                        media_id = upload_media_to_whatsapp(response, "audio/mpeg")
-                        if media_id:
-                            send_whatsapp_audio(phone, media_id)
-                        else:
-                            send_whatsapp(phone, "Tuve un problema generando mi respuesta de voz. 🎤")
-                    else:
-                        # Respuesta texto normal
-                        send_whatsapp(phone, response)
-                else:
-                    config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
-                
-            return "OK", 200
-
-        except Exception as e:
-            config.logger.error(f"Error en Webhook: {e}", exc_info=True)
-            return "Error", 500
-
 def upload_media_to_whatsapp(media_bytes, mime_type):
     """Sube un archivo multimedia a WhatsApp y devuelve el ID."""
     try:
@@ -206,3 +115,169 @@ def send_whatsapp_audio(phone, media_id):
         response.raise_for_status()
     except Exception as e:
         config.logger.error(f"Error enviando Audio WhatsApp: {e}")
+
+
+# --- WEBHOOK (Publisher) ---
+
+@functions_framework.http
+def whatsapp_webhook(request):
+    """
+    Entrada Síncrona: Valida el mensaje, lo pone en Pub/Sub y responde 200 OK.
+    """
+    # 1. Verificación (Handshake con Meta)
+    if request.method == "GET":
+        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
+            return request.args.get("hub.challenge"), 200
+        return "Forbidden", 403
+
+    # 2. Recepción de Mensajes (POST)
+    if request.method == "POST":
+        try:
+            data = request.get_json()
+            entry = data.get('entry', [])[0]
+            changes = entry.get('changes', [])[0]
+            value = changes.get('value', {})
+            
+            if 'messages' in value:
+                msg = value['messages'][0]
+                phone = msg['from']
+                message_id = msg.get('id')
+
+                # Verificar antigüedad
+                msg_ts = int(msg.get('timestamp', 0))
+                now_ts = int(time.time())
+                if now_ts - msg_ts > 300:
+                    config.logger.warning(f"⏳ Mensaje descartado por antigüedad ({now_ts - msg_ts}s). ID: {message_id}")
+                    return "OK", 200
+
+                # Ack inmediato al usuario (Check azul)
+                if message_id:
+                    mark_as_read(message_id)
+
+                # Publicar a Pub/Sub
+                if config.PUBSUB_TOPIC and publisher:
+                    payload_data = {
+                        "msg": msg,
+                        "phone": phone,
+                        "timestamp": now_ts
+                    }
+                    data_str = json.dumps(payload_data)
+                    data_bytes = data_str.encode("utf-8")
+
+                    future = publisher.publish(config.PUBSUB_TOPIC, data_bytes)
+                    future.result() # Esperar confirmación de publicación (rápido)
+                    config.logger.info(f"Published message {message_id} to {config.PUBSUB_TOPIC}")
+                else:
+                    config.logger.error("PUBSUB_TOPIC not set or Publisher failed. Falling back to sync (not recommended).")
+                    # Fallback (optional, mostly for dev/debug if no PubSub)
+                    # _process_message_logic(msg, phone)
+                    # Preferible fallar o loggear para forzar configuración correcta en prod.
+
+            return "OK", 200
+
+        except Exception as e:
+            config.logger.error(f"Error en Webhook: {e}", exc_info=True)
+            return "Error", 500
+
+
+# --- WORKER (Subscriber) ---
+
+@functions_framework.http
+def whatsapp_worker(request):
+    """
+    Proceso Asíncrono: Recibe el Push de Pub/Sub y procesa el mensaje con Gemini.
+    """
+    if request.method != "POST":
+        return "Method Not Allowed", 405
+
+    try:
+        envelope = request.get_json()
+        if not envelope:
+            msg = "no Pub/Sub message received"
+            config.logger.error(f"error: {msg}")
+            return f"Bad Request: {msg}", 400
+
+        if not isinstance(envelope, dict) or "message" not in envelope:
+            msg = "invalid Pub/Sub message format"
+            config.logger.error(f"error: {msg}")
+            return f"Bad Request: {msg}", 400
+
+        pubsub_message = envelope["message"]
+
+        if isinstance(pubsub_message, dict) and "data" in pubsub_message:
+            # Decodificar datos
+            data_str = base64.b64decode(pubsub_message["data"]).decode("utf-8")
+            payload = json.loads(data_str)
+
+            msg = payload.get("msg")
+            phone = payload.get("phone")
+
+            if msg and phone:
+                _process_message_logic(msg, phone)
+            else:
+                config.logger.warning("Payload incompleto en Worker.")
+
+        return "OK", 200
+
+    except Exception as e:
+        config.logger.error(f"Error en Worker: {e}", exc_info=True)
+        return "Internal Server Error", 500
+
+
+def _process_message_logic(msg, phone):
+    """Lógica central de procesamiento (extraída para ser usada por el Worker)."""
+    try:
+        message_id = msg.get('id')
+
+        # Extracción de texto y Multimedia
+        text = ""
+        image_data = None
+        audio_data = None
+
+        if msg['type'] == 'text':
+            text = msg['text']['body']
+        elif msg['type'] == 'interactive':
+            text = msg['interactive']['button_reply']['title']
+        elif msg['type'] == 'image':
+            text = msg['image'].get('caption', "")
+            media_id = msg['image']['id']
+            media_url = get_media_url(media_id)
+            if media_url:
+                image_data = download_media(media_url)
+        elif msg['type'] == 'audio':
+            media_id = msg['audio']['id']
+            media_url = get_media_url(media_id)
+            if media_url:
+                audio_data = download_media(media_url)
+            if not audio_data:
+                text = "[Audio no descargado]"
+        else:
+            text = "[Multimedia no soportado]"
+
+        # Security check
+        if text and len(text) > 1000:
+            text = text[:1000] + "..."
+
+        # Reset manual
+        if text and "reset" in text.lower():
+            brain._manage_history(phone, clear=True)
+            send_whatsapp(phone, "♻️ Memoria reiniciada.")
+            return
+
+        # --- LLAMADA AL CEREBRO ---
+        response = brain.process_message(text, phone, message_id, image_data=image_data, audio_data=audio_data)
+
+        if response:
+            if isinstance(response, bytes):
+                media_id = upload_media_to_whatsapp(response, "audio/mpeg")
+                if media_id:
+                    send_whatsapp_audio(phone, media_id)
+                else:
+                    send_whatsapp(phone, "Tuve un problema generando mi respuesta de voz. 🎤")
+            else:
+                send_whatsapp(phone, response)
+        else:
+            config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
+
+    except Exception as e:
+        config.logger.error(f"Error procesando lógica de mensaje: {e}", exc_info=True)

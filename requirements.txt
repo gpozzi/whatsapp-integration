@@ -11,3 +11,4 @@ langchain-core
 langsmith
 gunicorn
 google-cloud-texttospeech
+google-cloud-pubsub
