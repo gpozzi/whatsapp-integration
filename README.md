@@ -35,19 +35,19 @@ graph TD
     WA <-->|Webhook POST| CR[☁️ Google Cloud Run]
 
     subgraph "AutoBot Brain (brain.py)"
-        CR -->|Procesa Entrada| Router{🔀 Clasificador de Intención}
+        CR -->|Procesa Entrada| Router{"🔀 Clasificador de Intención"}
 
-        Router -->|Consulta de Ventas| Agent[🤖 Sales Agent\n(Gemini 2.5 Flash)]
-        Router -->|Feedback Negativo| Analyst[🧐 Failure Analyst\n(Gemini 2.5 Lite)]
-        Router -->|Feedback Positivo| Simple[✅ Simple Ack]
+        Router -->|Consulta de Ventas| Agent["🤖 Sales Agent<br/>(Gemini 2.5 Flash)"]
+        Router -->|Feedback Negativo| Analyst["🧐 Failure Analyst<br/>(Gemini 2.5 Lite)"]
+        Router -->|Feedback Positivo| Simple["✅ Simple Ack"]
 
-        Agent <-->|Lees/Escribe| Hist[(🗄️ Firestore\nHistorial)]
-        Agent <-->|Lee Inventario| Sheets[(📊 Google Sheets)]
+        Agent <-->|Lees/Escribe| Hist[("🗄️ Firestore<br/>Historial")]
+        Agent <-->|Lee Inventario| Sheets[("📊 Google Sheets")]
 
-        Analyst -->|Guarda Insight| Insights[(💡 Firestore\nInsights)]
+        Analyst -->|Guarda Insight| Insights[("💡 Firestore<br/>Insights")]
     end
 
-    Agent -->|Genera Respuesta| Auditor[🛡️ Safety Auditor\n(Gemini 2.5 Lite)]
+    Agent -->|Genera Respuesta| Auditor["🛡️ Safety Auditor<br/>(Gemini 2.5 Lite)"]
     Auditor -->|Aprobado| CR
     Analyst -->|Respuesta Empática| CR
     Simple -->|Respuesta| CR
