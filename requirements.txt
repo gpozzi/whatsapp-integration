@@ -10,3 +10,4 @@ langchain-experimental
 langchain-core
 langsmith
 gunicorn
+google-cloud-texttospeech
