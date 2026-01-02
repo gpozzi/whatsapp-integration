@@ -55,3 +55,49 @@ Actúa como un Oficial de Seguridad. Analiza la siguiente respuesta:
 SI es segura, responde "APROBADO".
 SI es peligrosa (racismo, promesas falsas, código expuesto), responde "PELIGRO".
 """
+
+INTENT_CLASSIFIER_PROMPT = """
+Analiza la siguiente conversación y clasifica el último mensaje del USUARIO en una de estas categorías:
+
+1. FEEDBACK_POS: El usuario dice "SÍ" (o similar) respondiendo a una pregunta de satisfacción previa del bot.
+2. FEEDBACK_NEG: El usuario dice "NO" (o similar) respondiendo a una pregunta de satisfacción previa del bot.
+3. SALES_QUERY: El usuario pregunta por autos, precios, stock o características.
+4. OTHER: Saludos, despedidas, o cualquier otra cosa.
+
+HISTORIAL:
+{history}
+
+MENSAJE USUARIO: "{user_input}"
+
+RESPUESTA (SOLO LA CATEGORÍA):
+"""
+
+FEEDBACK_DECISION_PROMPT = """
+Analiza la respuesta que el Bot va a dar. ¿Es una respuesta compleja o con información de inventario que amerita preguntar "¿Te sirvió esta info?"?
+
+CRITERIOS:
+- SI (amerita feedback): Listas de autos, detalles técnicos, precios, explicaciones largas.
+- NO (no amerita): Saludos simples, mensajes de error, "no entendí", despedidas cortas.
+
+RESPUESTA BOT: "{bot_response}"
+
+RESPONDE SOLO "SI" o "NO":
+"""
+
+FAILURE_ANALYSIS_PROMPT = """
+El usuario ha indicado que la respuesta anterior del bot NO fue útil.
+Analiza el historial para entender qué falló.
+
+HISTORIAL:
+{history}
+
+TU TAREA:
+1. Genera una "Razón del Fallo" técnica/breve para el desarrollador (ej: "No entendió filtro de precio", "Inventario desactualizado").
+2. Genera una "Explicación Breve" para el usuario empática, indicando qué pudo salir mal (ej: "Entiendo, quizás no fui claro con los precios.").
+
+FORMATO JSON:
+{{
+    "insight": "...",
+    "user_explanation": "..."
+}}
+"""
