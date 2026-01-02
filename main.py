@@ -122,7 +122,7 @@ def send_whatsapp_audio(phone, media_id):
 @functions_framework.http
 def whatsapp_webhook(request):
     """
-    Entrada Síncrona: Valida el mensaje, lo pone en Pub/Sub y responde 200 OK.
+    Entrada Híbrida: Maneja verificación, mensajes de WhatsApp y mensajes de Pub/Sub.
     """
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
@@ -135,24 +135,37 @@ def whatsapp_webhook(request):
         try:
             data = request.get_json()
 
-            # Handle Pub/Sub wrapped message
+            # --- NUEVA LÓGICA PARA PUB/SUB ---
+            # Si el mensaje viene de Google Pub/Sub (la caja)
             if data and 'message' in data and 'data' in data['message']:
                 try:
+                    # 1. Abrimos la caja
                     decoded_data = base64.b64decode(data['message']['data']).decode('utf-8')
-                    data = json.loads(decoded_data)
-                except Exception as e:
-                    config.logger.error(f"Error decoding Pub/Sub message: {e}")
-                    return "Bad Request", 400
+                    payload = json.loads(decoded_data)
 
+                    # 2. ¿Es el formato simplificado que nosotros mismos enviamos? ('msg' y 'phone')
+                    if 'msg' in payload and 'phone' in payload:
+                        config.logger.info("📩 Mensaje de Pub/Sub procesado correctamente.")
+                        # ¡AQUÍ ESTÁ LA CLAVE! Lo mandamos directo al cerebro
+                        _process_message_logic(payload['msg'], payload['phone'])
+                        return "OK", 200
+
+                    # Si no es nuestro formato, quizás sea raw (poco probable, pero por seguridad)
+                    data = payload
+                except Exception as e:
+                    config.logger.error(f"Error abriendo mensaje de Pub/Sub: {e}")
+                    return "Bad Request", 400
+            # ---------------------------------
+
+            # Lógica original para mensajes directos de WhatsApp
             entries = data.get('entry', [])
             if not entries:
-                config.logger.info("Webhook recibido sin 'entry'.")
+                config.logger.info("Webhook recibido sin 'entry' (Ignorado).")
                 return "OK", 200
 
             entry = entries[0]
             changes_list = entry.get('changes', [])
             if not changes_list:
-                config.logger.info("Webhook recibido sin 'changes'.")
                 return "OK", 200
 
             changes = changes_list[0]
@@ -162,19 +175,19 @@ def whatsapp_webhook(request):
                 msg = value['messages'][0]
                 phone = msg['from']
                 message_id = msg.get('id')
-
-                # Verificar antigüedad
                 msg_ts = int(msg.get('timestamp', 0))
                 now_ts = int(time.time())
+
+                # Verificar antigüedad (Evitar bucles de reintentos infinitos)
                 if now_ts - msg_ts > 300:
                     config.logger.warning(f"⏳ Mensaje descartado por antigüedad ({now_ts - msg_ts}s). ID: {message_id}")
                     return "OK", 200
 
-                # Ack inmediato al usuario (Check azul)
+                # Ack inmediato (Check azul)
                 if message_id:
                     mark_as_read(message_id)
 
-                # Publicar a Pub/Sub
+                # Publicar a Pub/Sub (Empaquetar para envío)
                 if config.PUBSUB_TOPIC and publisher:
                     payload_data = {
                         "msg": msg,
@@ -185,13 +198,11 @@ def whatsapp_webhook(request):
                     data_bytes = data_str.encode("utf-8")
 
                     future = publisher.publish(config.PUBSUB_TOPIC, data_bytes)
-                    future.result() # Esperar confirmación de publicación (rápido)
-                    config.logger.info(f"Published message {message_id} to {config.PUBSUB_TOPIC}")
+                    future.result()
+                    config.logger.info(f"📤 Mensaje enviado a Pub/Sub: {message_id}")
                 else:
-                    config.logger.error("PUBSUB_TOPIC not set or Publisher failed. Falling back to sync (not recommended).")
-                    # Fallback (optional, mostly for dev/debug if no PubSub)
-                    # _process_message_logic(msg, phone)
-                    # Preferible fallar o loggear para forzar configuración correcta en prod.
+                    # Fallback si no hay Pub/Sub
+                    _process_message_logic(msg, phone)
 
             return "OK", 200
 
