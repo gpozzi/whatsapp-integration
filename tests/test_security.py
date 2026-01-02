@@ -41,33 +41,16 @@ class TestSecurity(unittest.TestCase):
 
         # Create a large payload
         large_text = "A" * 5000
-        payload = {
-            "entry": [{
-                "changes": [{
-                    "value": {
-                        "messages": [{
-                            "from": "123456789",
-                            "type": "text",
-                            "id": "msg_123",  # Needs an ID now
-                            "timestamp": str(int(time.time())),
-                            "text": {"body": large_text},
-                            "id": "msg_id_1"
-                        }]
-                    }
-                }]
-            }]
+        msg = {
+            "from": "123456789",
+            "type": "text",
+            "id": "msg_id_1",
+            "timestamp": str(int(time.time())),
+            "text": {"body": large_text}
         }
 
-        # Create a mock request object
-        request = MagicMock()
-        request.method = "POST"
-        request.get_json.return_value = payload
-
-        # Call the webhook
-        response = main.whatsapp_webhook(request)
-
-        # Verify response
-        self.assertEqual(response, ("OK", 200))
+        # Call the logic directly (worker logic)
+        main._process_message_logic(msg, "123456789")
 
         # Check if brain.process_message was called with TRUNCATED text
         expected_text = "A" * 1000 + "..."
