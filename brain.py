@@ -13,8 +13,10 @@ import base64
 # AI Integrations
 from langchain_google_vertexai import ChatVertexAI
 from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_experimental.tools.python.tool import PythonAstREPLTool
 from langchain_core.messages import HumanMessage
 import config
+from security import validate_python_code, SecurityError
 
 # --- ESTADO GLOBAL ---
 _db_client: Optional[firestore.Client] = None
@@ -30,6 +32,26 @@ MODEL_TEMP = 0.0
 CONTEXT_CHAR_LIMIT = 4000
 CONTEXT_TIMEOUT_HOURS = 6
 BAD_WORDS = ["Error", "Processing", "Agent stopped"]
+
+class SafePythonAstREPLTool(PythonAstREPLTool):
+    """Herramienta de ejecución de Python con validación de seguridad (AST)."""
+
+    name = "python_repl_ast"
+    description = (
+        "A Python shell. Use this to execute python commands. "
+        "Input should be a valid python command. "
+        "When using this tool, sometimes output is abbreviated - "
+        "make sure it does not look abbreviated before using it in your answer."
+    )
+
+    def _run(self, query: str, run_manager=None) -> str:
+        try:
+            validate_python_code(query)
+            return super()._run(query, run_manager=run_manager)
+        except SecurityError as e:
+            return f"SecurityError: {str(e)}"
+        except Exception as e:
+            return f"Error: {str(e)}"
 
 def _init_services() -> ChatVertexAI:
     """Inicializa los servicios de Google Cloud y los modelos de IA.
@@ -102,6 +124,10 @@ def _load_inventory(llm_model: ChatVertexAI) -> bool:
         _df_inventory = pd.DataFrame(rows[1:], columns=headers)
 
         # Inicializar Agente con configuración anti-bucle y manejo de errores
+        # SECURITY NOTE: allow_dangerous_code=True es necesario para iniciar el agente,
+        # pero REEMPLAZAMOS la herramienta por defecto con nuestra versión segura (SafePythonAstREPLTool)
+        # que realiza validación de AST antes de ejecutar.
+
         _sales_agent = create_pandas_dataframe_agent(
             llm_model,
             _df_inventory,
@@ -111,6 +137,13 @@ def _load_inventory(llm_model: ChatVertexAI) -> bool:
             agent_executor_kwargs={"handle_parsing_errors": True},
             max_iterations=4,
         )
+
+        # SECURITY PATCH: Swap out the insecure tool for our safe one
+        safe_tool = SafePythonAstREPLTool(locals={"df": _df_inventory})
+        # Mantenemos otras herramientas si existen, pero reemplazamos la de python
+        current_tools = [t for t in _sales_agent.tools if t.name != safe_tool.name]
+        current_tools.append(safe_tool)
+        _sales_agent.tools = current_tools
         config.logger.info(f"✅ Inventario cargado: {len(_df_inventory)} autos.")
         return True
     except Exception as e:

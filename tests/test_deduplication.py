@@ -14,6 +14,7 @@ sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
+sys.modules['langchain_experimental.tools.python.tool'] = MagicMock()
 sys.modules['langchain_core'] = MagicMock()
 sys.modules['langchain_core.messages'] = MagicMock()
 
