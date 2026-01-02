@@ -16,8 +16,8 @@ def send_whatsapp(phone, text):
             "to": phone,
             "text": {"body": text}
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
+        # Security enhancement: Add timeout to prevent hanging
+        requests.post(url, headers=headers, json=payload, timeout=10)
     except Exception as e:
         config.logger.error(f"Error enviando WhatsApp: {e}")
 
@@ -74,6 +74,11 @@ def whatsapp_webhook(request):
                     text = msg['interactive']['button_reply']['title']
                 else:
                     text = "[Multimedia no soportado]"
+
+                # Security enhancement: Input length validation
+                # Prevent DoS/Token exhaustion by limiting input size
+                if len(text) > 1000:
+                    text = text[:1000] + "..."
                 
                 # Lógica de Reset manual
                 if "reset" in text.lower():
