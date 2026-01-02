@@ -32,8 +32,12 @@ class TestBrainFeatures(unittest.TestCase):
         # Reset globals
         brain._db_client = MagicMock()
         brain._df_inventory = MagicMock()
-        brain._sales_agent = MagicMock()
+        brain._inventory_timestamp = datetime.datetime.now(datetime.timezone.utc)
+        # brain._sales_agent = MagicMock() # Removed
         brain._safety_model = MagicMock()
+
+        # Re-bind
+        brain.create_pandas_dataframe_agent = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
 
     def test_tone_and_intent_analysis(self):
         """Test parsing of intent and tone from the safety model."""
@@ -67,12 +71,6 @@ class TestBrainFeatures(unittest.TestCase):
         # 1. Setup Intent/Tone
         brain._safety_model.invoke.return_value.content = "CATEGORY: SALES_QUERY | TONE: CASUAL"
 
-        # 2. Setup Sales Agent Response (No stock)
-        brain._sales_agent.invoke.side_effect = [
-            {"output": "Lo siento, no tengo ese auto."},  # Primera llamada (Query normal)
-            {"output": "Tengo un Honda Civic similar."}   # Segunda llamada (Cross-selling)
-        ]
-
         # 3. Setup Inventory (Make it not None so it doesn't fail)
         brain._df_inventory = MagicMock()
         brain._df_inventory.empty = False
@@ -83,10 +81,25 @@ class TestBrainFeatures(unittest.TestCase):
              patch("brain._check_is_duplicate", return_value=False), \
              patch("brain._manage_history", return_value=""), \
              patch("brain._audit_response", return_value=True), \
-             patch("brain._should_ask_feedback", return_value=False):
+             patch("brain._should_ask_feedback", return_value=False), \
+             patch("brain._get_sales_agent") as mock_get_agent:
 
             mock_init.return_value = MagicMock()
             mock_load.return_value = True
+
+            # 2. Setup Sales Agent Response (No stock)
+            # Create a mock agent instance
+            mock_agent = MagicMock()
+            mock_get_agent.return_value = mock_agent
+
+            mock_agent.invoke.side_effect = [
+                {"output": "Lo siento, no tengo ese auto."},  # Primera llamada (Query normal)
+                {"output": "Tengo un Honda Civic similar."}   # Segunda llamada (Cross-selling)
+            ]
+
+            # Fallback
+            mock_create = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
+            mock_create.return_value = mock_agent
 
             response = brain.process_message("Busco un auto raro", "123", "msg1")
 

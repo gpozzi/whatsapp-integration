@@ -21,7 +21,7 @@ from security import validate_python_code, SecurityError
 # --- ESTADO GLOBAL ---
 _db_client: Optional[firestore.Client] = None
 _df_inventory: Optional[pd.DataFrame] = None
-_sales_agent = None
+_inventory_timestamp: Optional[datetime.datetime] = None
 _safety_model: Optional[ChatVertexAI] = None
 
 # --- CONSTANTES ---
@@ -95,16 +95,13 @@ def _init_services() -> ChatVertexAI:
         config.logger.critical(f"Error fatal inicializando servicios: {e}")
         raise
 
-def _load_inventory(llm_model: ChatVertexAI) -> bool:
-    """Descarga el inventario desde Google Sheets e inicializa el Agente de DataFrame.
-
-    Args:
-        llm_model (ChatVertexAI): El modelo de lenguaje que potenciará al agente.
+def _load_inventory() -> bool:
+    """Descarga el inventario desde Google Sheets.
 
     Returns:
-        bool: True si el inventario se cargó y el agente se creó exitosamente, False en caso contrario.
+        bool: True si el inventario se cargó exitosamente, False en caso contrario.
     """
-    global _df_inventory, _sales_agent
+    global _df_inventory, _inventory_timestamp
     try:
         config.logger.info("📥 Descargando inventario...")
         creds, _ = google.auth.default()
@@ -122,36 +119,51 @@ def _load_inventory(llm_model: ChatVertexAI) -> bool:
 
         headers = [h.lower().strip() for h in rows[0]]
         _df_inventory = pd.DataFrame(rows[1:], columns=headers)
+        _inventory_timestamp = datetime.datetime.now(datetime.timezone.utc)
 
-        # Inicializar Agente con configuración anti-bucle y manejo de errores
-        # SECURITY NOTE: allow_dangerous_code=True es necesario para iniciar el agente,
-        # pero REEMPLAZAMOS la herramienta por defecto con nuestra versión segura (SafePythonAstREPLTool)
-        # que realiza validación de AST antes de ejecutar.
-
-        _sales_agent = create_pandas_dataframe_agent(
-            llm_model,
-            _df_inventory,
-            verbose=True,
-            allow_dangerous_code=True,
-            prefix=config.SALES_AGENT_PREFIX,
-            agent_executor_kwargs={"handle_parsing_errors": True},
-            max_iterations=4,
-        )
-
-        # SECURITY PATCH: Swap out the insecure tool for our safe one
-        safe_tool = SafePythonAstREPLTool(locals={"df": _df_inventory})
-        # Mantenemos otras herramientas si existen, pero reemplazamos la de python
-        current_tools = [t for t in _sales_agent.tools if t.name != safe_tool.name]
-        current_tools.append(safe_tool)
-        _sales_agent.tools = current_tools
         config.logger.info(f"✅ Inventario cargado: {len(_df_inventory)} autos.")
         return True
     except Exception as e:
         config.logger.error(f"Error cargando inventario: {e}")
         # Revertir estado parcial para evitar inconsistencias
         _df_inventory = None
-        _sales_agent = None
+        _inventory_timestamp = None
         return False
+
+def _get_sales_agent(llm_model: ChatVertexAI):
+    """Obtiene una instancia fresca del agente de ventas con el inventario actualizado.
+
+    Verifica si el inventario necesita recarga (TTL) antes de crear el agente.
+    """
+    global _df_inventory, _inventory_timestamp
+
+    # Verificar si el inventario es stale o no existe
+    needs_reload = False
+    if _df_inventory is None or _inventory_timestamp is None:
+        needs_reload = True
+    else:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if (now - _inventory_timestamp) > datetime.timedelta(minutes=config.INVENTORY_REFRESH_TIME_MINUTES):
+            needs_reload = True
+            config.logger.info("⌛ Inventario caducado (TTL). Recargando...")
+
+    if needs_reload:
+        if not _load_inventory():
+             # Si falla la recarga, pero teníamos datos viejos, podríamos decidir usarlos o fallar.
+             # Aquí fallamos si no tenemos nada. Si tenemos algo viejo, _df_inventory podría ser None si falló.
+             if _df_inventory is None:
+                raise Exception("No se pudo cargar el inventario.")
+
+    # Crear una nueva instancia del agente para este request
+    return create_pandas_dataframe_agent(
+        llm_model,
+        _df_inventory,
+        verbose=True,
+        allow_dangerous_code=True,
+        prefix=config.SALES_AGENT_PREFIX,
+        agent_executor_kwargs={"handle_parsing_errors": True},
+        max_iterations=4,
+    )
 
 def _update_user_profile(phone: str, history: str):
     """Extrae preferencias clave del usuario y actualiza su perfil a largo plazo.
@@ -355,13 +367,12 @@ def _check_is_duplicate(message_id: str) -> bool:
         config.logger.error(f"Error verificando duplicado: {e}")
         return False
 
-def _find_similar_cars(query_context: str) -> str:
+def _find_similar_cars(query_context: str, sales_agent) -> str:
     """Busca autos similares cuando no hay resultados exactos.
 
     Args:
         query_context (str): Texto que describe lo que se buscaba (para extraer precio/tipo).
-        En esta implementación simple, usamos el DataFrame global y heurísticas básicas
-        o le pedimos al LLM que genere una query de Pandas más amplia.
+        sales_agent: La instancia del agente a usar.
 
     Returns:
         str: Texto con sugerencias.
@@ -371,11 +382,6 @@ def _find_similar_cars(query_context: str) -> str:
 
     try:
         # Estrategia: Le pedimos al Agente que busque "alternativas" explícitamente.
-        # Pero como ya estamos fuera del flujo del agente, hacemos una búsqueda manual rápida
-        # si pudiéramos extraer el criterio.
-        #
-        # ALTERNATIVA MEJOR: Re-invocar al agente con un prompt específico de "Cross-selling".
-
         cross_sell_prompt = (
             f"El usuario buscaba: '{query_context}'. No se encontró exacto.\n"
             "TU TAREA: Buscar en el dataframe autos SIMILARES (mismo tipo de carrocería O precio +/- 20%).\n"
@@ -383,7 +389,7 @@ def _find_similar_cars(query_context: str) -> str:
             "Si no, di 'No encontré similares'."
         )
 
-        response = _sales_agent.invoke(cross_sell_prompt)
+        response = sales_agent.invoke(cross_sell_prompt)
         output = response['output']
 
         if "No encontré" in output or "Agent stopped" in output:
@@ -584,9 +590,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     if _check_is_duplicate(message_id):
         return None
 
-    # Verificación de Inventario
-    if _df_inventory is None:
-        # Necesitamos pasar el modelo a _load_inventory.
+    # Obtener instancia del agente (carga inventario si es necesario)
+    try:
         # Si _init_services retornó None (porque _db_client ya existía), necesitamos asegurar una instancia.
         model_to_use = primary_model
         if not model_to_use:
@@ -597,8 +602,10 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
                 temperature=MODEL_TEMP,
             )
 
-        if not _load_inventory(model_to_use):
-            return "El sistema se está reiniciando, dame un minuto..."
+        sales_agent = _get_sales_agent(model_to_use)
+    except Exception as e:
+        config.logger.error(f"Error obteniendo agente de ventas: {e}")
+        return "El sistema se está actualizando, dame un minuto..."
 
     # 0. Procesamiento de Audio (si existe)
     # Detectamos género y transcribimos para usarlo como 'user_text'
@@ -646,14 +653,14 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             if image_context:
                 prompt += "\nNOTA: El usuario busca algo similar a lo que se describe en [INFO IMAGEN]."
 
-            response = _sales_agent.invoke(prompt)
+            response = sales_agent.invoke(prompt)
             final_text = response['output']
 
             # Lógica de Cross-Selling (Si la respuesta indica vacío)
             # Detectamos frases típicas de "no hay resultados"
             no_stock_phrases = ["no tengo", "no encuentro", "no hay", "0 resultados", "no está disponible"]
             if any(p in final_text.lower() for p in no_stock_phrases):
-                suggestion = _find_similar_cars(user_text)
+                suggestion = _find_similar_cars(user_text, sales_agent)
                 if suggestion:
                     final_text += suggestion
 

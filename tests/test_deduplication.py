@@ -29,8 +29,9 @@ class TestDeduplication(unittest.TestCase):
     def setUp(self):
         # Reset Global State in Brain
         brain._db_client = None
-        brain._df_inventory = None
-        brain._sales_agent = None
+        brain._df_inventory = MagicMock() # Mock it so it's not None
+        brain._inventory_timestamp = datetime.datetime.now(datetime.timezone.utc) # Fresh
+        # brain._sales_agent = None  <-- Removed
         brain._safety_model = None
 
         # Explicitly overwrite brain.firestore with a fresh Mock
@@ -41,7 +42,8 @@ class TestDeduplication(unittest.TestCase):
     @patch('brain.ChatVertexAI')
     @patch('brain.build')
     @patch('google.auth.default')
-    def test_deduplication(self, mock_auth, mock_build, mock_vertex, mock_agent):
+    @patch('brain._get_sales_agent')
+    def test_deduplication(self, mock_get_agent, mock_auth, mock_build, mock_vertex, mock_create_agent):
         """Test that duplicate message IDs are handled correctly."""
 
         # Setup mocks
@@ -77,8 +79,12 @@ class TestDeduplication(unittest.TestCase):
 
         # Mock agent response
         mock_agent_instance = MagicMock()
-        brain._sales_agent = mock_agent_instance
+        mock_get_agent.return_value = mock_agent_instance
         mock_agent_instance.invoke.return_value = {'output': 'Response Text'}
+
+        # Fallback configuration
+        mock_create = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
+        mock_create.return_value = mock_agent_instance
 
         # Mock safety auditor
         brain._safety_model = MagicMock()
