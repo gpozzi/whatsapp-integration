@@ -1,13 +1,23 @@
-
 import unittest
 import sys
 from unittest.mock import patch, MagicMock
 
-# Mock functions_framework and requests
-mock_ff = MagicMock()
-mock_ff.http.side_effect = lambda f: f
-sys.modules['functions_framework'] = mock_ff
+# --- MOCK HEAVY DEPENDENCIES BEFORE IMPORTS ---
+sys.modules['pandas'] = MagicMock()
+sys.modules['google'] = MagicMock()
+sys.modules['google.auth'] = MagicMock()
+sys.modules['googleapiclient'] = MagicMock()
+sys.modules['googleapiclient.discovery'] = MagicMock()
+sys.modules['google.cloud'] = MagicMock()
+sys.modules['google.cloud.firestore'] = MagicMock()
+sys.modules['langchain_google_vertexai'] = MagicMock()
+sys.modules['langchain_experimental'] = MagicMock()
+sys.modules['langchain_experimental.agents'] = MagicMock()
+sys.modules['functions_framework'] = MagicMock()
 sys.modules['requests'] = MagicMock()
+
+# Ensure functions_framework.http decorator works
+sys.modules['functions_framework'].http = lambda f: f
 
 import main
 import json
@@ -33,6 +43,7 @@ class TestSecurity(unittest.TestCase):
                         "messages": [{
                             "from": "123456789",
                             "type": "text",
+                            "id": "msg_123",  # Needs an ID now
                             "timestamp": str(int(time.time())),
                             "text": {"body": large_text},
                             "id": "msg_id_1"

@@ -25,22 +25,30 @@ import datetime
 
 class TestDeduplication(unittest.TestCase):
 
-    @patch('brain.firestore.Client')
+    def setUp(self):
+        # Reset Global State in Brain
+        brain._db_client = None
+        brain._df_inventory = None
+        brain._sales_agent = None
+        brain._safety_model = None
+
+        # Explicitly overwrite brain.firestore with a fresh Mock
+        # This ensures that when brain calls firestore.Client, it uses OUR mock
+        brain.firestore = MagicMock()
+
     @patch('brain.create_pandas_dataframe_agent')
     @patch('brain.ChatVertexAI')
     @patch('brain.build')
     @patch('google.auth.default')
-    def test_deduplication(self, mock_auth, mock_build, mock_vertex, mock_agent, mock_firestore):
+    def test_deduplication(self, mock_auth, mock_build, mock_vertex, mock_agent):
         """Test that duplicate message IDs are handled correctly."""
 
         # Setup mocks
         mock_auth.return_value = (None, None)
-        mock_db = MagicMock()
-        mock_firestore.return_value = mock_db
 
-        # Force initialization
-        brain._db_client = None # Reset
-        brain._init_services()
+        # Configure the Firestore Mock we injected in setUp
+        mock_db = MagicMock()
+        brain.firestore.Client.return_value = mock_db
 
         # Mock Collections via side_effect
         mock_processed_coll = MagicMock()
@@ -95,7 +103,11 @@ class TestDeduplication(unittest.TestCase):
 
         # --- Test Case 2: Duplicate Message ---
         mock_processed_doc.reset_mock()
+        mock_processed_doc.set.reset_mock()
         mock_processed_doc.get.return_value.exists = True # Document exists
+
+        # We must re-inject the side effects for the second call if needed,
+        # but the document mock is persistent, we just changed its return value.
 
         response = brain.process_message("Hello Again", "123456", "msg_existing_123")
 
