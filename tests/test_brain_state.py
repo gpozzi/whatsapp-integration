@@ -13,7 +13,7 @@ sys.modules['google.cloud.texttospeech'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
-sys.modules['langchain_core.messages'] = MagicMock()
+# sys.modules['langchain_core.messages'] = MagicMock() # Removed to fix Pydantic schema generation error
 
 # Import after mocking
 import brain

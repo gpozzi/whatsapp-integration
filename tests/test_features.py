@@ -15,12 +15,7 @@ sys.modules["google.cloud.texttospeech"] = MagicMock()
 sys.modules["googleapiclient"] = MagicMock()
 sys.modules["googleapiclient.discovery"] = MagicMock()
 sys.modules["langchain_google_vertexai"] = MagicMock()
-sys.modules["langchain_core"] = MagicMock()
-sys.modules["langchain_core.messages"] = MagicMock()
-sys.modules["langchain_experimental"] = MagicMock()
 sys.modules["langchain_experimental.agents"] = MagicMock()
-sys.modules["langchain_experimental.tools.python.tool"] = MagicMock()
-sys.modules["pandas"] = MagicMock()
 
 # --- IMPORT APP ---
 import brain

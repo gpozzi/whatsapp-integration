@@ -3,7 +3,6 @@ import sys
 from unittest.mock import patch, MagicMock
 
 # --- MOCK HEAVY DEPENDENCIES BEFORE IMPORTS ---
-sys.modules['pandas'] = MagicMock()
 sys.modules['google'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
 sys.modules['googleapiclient'] = MagicMock()
@@ -11,12 +10,8 @@ sys.modules['googleapiclient.discovery'] = MagicMock()
 sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['langchain_experimental'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
-sys.modules['langchain_core'] = MagicMock()
-sys.modules['langchain_core.messages'] = MagicMock()
 # Mock module where PythonAstREPLTool resides
-sys.modules['langchain_experimental.tools.python.tool'] = MagicMock()
 sys.modules['functions_framework'] = MagicMock()
 sys.modules['requests'] = MagicMock()
 

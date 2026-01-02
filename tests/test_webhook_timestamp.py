@@ -38,13 +38,8 @@ sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
 # brain imports pandas, langchain, etc.
 # We should mock those too if we want to import main safely without real env.
 
-sys.modules['pandas'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['langchain_experimental'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
-sys.modules['langchain_experimental.tools.python.tool'] = MagicMock()
-sys.modules['langchain_core'] = MagicMock()
-sys.modules['langchain_core.messages'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
 sys.modules['googleapiclient'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()
