@@ -706,10 +706,8 @@ def _analyze_audio(audio_bytes: bytes) -> dict:
         return {"text": "", "gender": "FEMALE"} # Default
 
     try:
-        # Codificar audio a base64 para enviarlo a Gemini
-        b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
-
         # Prompt multimodal
+        # Usamos 'media' type con raw bytes. langchain-google-vertexai mapea esto a Blob.
         message = HumanMessage(
             content=[
                 {
@@ -721,9 +719,9 @@ def _analyze_audio(audio_bytes: bytes) -> dict:
                             "{\"text\": \"...\", \"gender\": \"...\"}"
                 },
                 {
-                    "type": "file",
+                    "type": "media",
                     "mime_type": "audio/ogg",
-                    "base64": b64_audio
+                    "data": audio_bytes
                 }
             ]
         )
