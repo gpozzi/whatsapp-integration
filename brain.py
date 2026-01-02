@@ -1,5 +1,6 @@
 import datetime
 import logging
+import json
 from typing import Optional, List, Union
 
 import pandas as pd
@@ -250,6 +251,95 @@ def _check_is_duplicate(message_id: str) -> bool:
         config.logger.error(f"Error verificando duplicado: {e}")
         return False
 
+def _classify_intent(user_text: str, history: str) -> str:
+    """Clasifica la intención del usuario usando el modelo ligero.
+
+    Args:
+        user_text (str): El mensaje actual del usuario.
+        history (str): El historial de la conversación.
+
+    Returns:
+        str: La categoría detectada (FEEDBACK_POS, FEEDBACK_NEG, SALES_QUERY, OTHER).
+    """
+    try:
+        if not _safety_model:
+            return "SALES_QUERY"
+
+        prompt = config.INTENT_CLASSIFIER_PROMPT.format(history=history, user_input=user_text)
+        intent = _safety_model.invoke(prompt).content.strip().upper()
+
+        # Validación simple para asegurar que retorna una categoría válida
+        valid_intents = ["FEEDBACK_POS", "FEEDBACK_NEG", "SALES_QUERY", "OTHER"]
+        if any(v in intent for v in valid_intents):
+            # Retornar la categoría que coincida
+            for v in valid_intents:
+                if v in intent:
+                    return v
+        return "SALES_QUERY" # Fallback por defecto
+    except Exception as e:
+        config.logger.error(f"Error clasificando intención: {e}")
+        return "SALES_QUERY"
+
+def _should_ask_feedback(bot_response: str) -> bool:
+    """Decide si se debe pedir feedback al usuario sobre la respuesta generada.
+
+    Args:
+        bot_response (str): La respuesta que el bot va a enviar.
+
+    Returns:
+        bool: True si se debe agregar la pregunta de feedback, False si no.
+    """
+    try:
+        if not _safety_model:
+            return False
+
+        prompt = config.FEEDBACK_DECISION_PROMPT.format(bot_response=bot_response)
+        decision = _safety_model.invoke(prompt).content.strip().upper()
+        return "SI" in decision
+    except Exception as e:
+        config.logger.error(f"Error decidiendo feedback: {e}")
+        return False
+
+def _handle_negative_feedback(phone: str, history: str) -> str:
+    """Maneja el feedback negativo analizando la causa y guardando el insight.
+
+    Args:
+        phone (str): ID del usuario para logging.
+        history (str): Historial de conversación.
+
+    Returns:
+        str: Respuesta empática para el usuario.
+    """
+    default_response = "Entendido. ¿Podrías reformular tu consulta con más detalles para poder ayudarte mejor?"
+
+    try:
+        if not _safety_model or not _db_client:
+            return default_response
+
+        prompt = config.FAILURE_ANALYSIS_PROMPT.format(history=history)
+        raw_response = _safety_model.invoke(prompt).content.strip()
+
+        # Limpieza básica de JSON Markdown (```json ... ```)
+        raw_response = raw_response.replace("```json", "").replace("```", "").strip()
+
+        analysis = json.loads(raw_response)
+        insight = analysis.get("insight", "Error desconocido")
+        user_explanation = analysis.get("user_explanation", default_response)
+
+        # Guardar Insight en Firestore
+        _db_client.collection("bot_insights").add({
+            "user_phone": phone,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+            "insight": insight,
+            "full_history": history
+        })
+
+        return f"{user_explanation} Por favor, intenta preguntarme de otra forma."
+
+    except Exception as e:
+        config.logger.error(f"Error manejando feedback negativo: {e}")
+        return default_response
+
 def process_message(user_text: str, phone_number: str, message_id: Optional[str] = None) -> Optional[str]:
     """Función principal de orquestación para procesar mensajes entrantes.
 
@@ -290,21 +380,39 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     # Gestión de Contexto
     history = _manage_history(phone_number)
 
+    # 1. Clasificación de Intención
+    intent = _classify_intent(user_text, history)
+    config.logger.info(f"Intención detectada: {intent}")
+
     try:
-        prompt = f"HISTORIAL:\n{history}\n\nCONSULTA: '{user_text}'"
+        final_text = ""
 
-        # Invocar Agente
-        response = _sales_agent.invoke(prompt)
-        final_text = response['output']
+        if intent == "FEEDBACK_NEG":
+            # 2. Manejo de Feedback Negativo
+            final_text = _handle_negative_feedback(phone_number, history)
 
-        # Filtro Estético/Errores
-        if "Agent stopped" in final_text or "iteration limit" in final_text:
-            config.logger.warning("⚠️ Loop detectado y ocultado.")
-            final_text = "¡Uy! Me mareé buscando en tantos autos 😵‍💫. ¿Podrías ser un poco más específico con lo que buscas? (Ej: Toyota Corolla 2020)"
+        elif intent == "FEEDBACK_POS":
+             # 3. Manejo de Feedback Positivo
+             final_text = "¡Gracias! Me alegra haberte ayudado. 😊 ¿Buscas algo más?"
 
-        # Auditoría de Seguridad
-        if not _audit_response(final_text):
-            return "No puedo procesar esa solicitud por motivos de seguridad."
+        else:
+            # 4. Flujo Normal (Sales Agent)
+            prompt = f"HISTORIAL:\n{history}\n\nCONSULTA: '{user_text}'"
+            response = _sales_agent.invoke(prompt)
+            final_text = response['output']
+
+            # Filtro Estético/Errores
+            if "Agent stopped" in final_text or "iteration limit" in final_text:
+                config.logger.warning("⚠️ Loop detectado y ocultado.")
+                final_text = "¡Uy! Me mareé buscando en tantos autos 😵‍💫. ¿Podrías ser un poco más específico con lo que buscas? (Ej: Toyota Corolla 2020)"
+
+            # Auditoría de Seguridad
+            if not _audit_response(final_text):
+                return "No puedo procesar esa solicitud por motivos de seguridad."
+
+            # 5. Decisión de Feedback (Supervisor)
+            if _should_ask_feedback(final_text):
+                final_text += " (¿Te sirvió esta info? Responde SÍ o NO)"
 
         # Guardar Interacción
         _manage_history(phone_number, user_text, final_text)
