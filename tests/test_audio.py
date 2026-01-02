@@ -35,8 +35,15 @@ class TestAudioFeatures(unittest.TestCase):
     def setUp(self):
         brain._db_client = MagicMock()
         brain._safety_model = MagicMock()
-        brain._sales_agent = MagicMock()
+        # brain._sales_agent is removed, so we don't mock it here
         brain._df_inventory = MagicMock()
+        brain._inventory_timestamp = brain.datetime.datetime.now(brain.datetime.timezone.utc)
+
+        # Re-bind brain imports to current mocks (fix for discover stale mocks)
+        brain.create_pandas_dataframe_agent = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
+        brain.ChatVertexAI = sys.modules["langchain_google_vertexai"].ChatVertexAI
+        brain.build = sys.modules["googleapiclient.discovery"].build
+        brain.HumanMessage = sys.modules["langchain_core.messages"].HumanMessage
 
         config.TTS_VOICE_MALE = "male-voice"
         config.TTS_VOICE_FEMALE = "female-voice"
@@ -114,7 +121,8 @@ class TestAudioFeatures(unittest.TestCase):
         _, kwargs = mock_client_instance.synthesize_speech.call_args
         self.assertEqual(kwargs['voice'].name, "female-voice")
 
-    def test_process_message_audio_flow(self):
+    @patch('brain._get_sales_agent')
+    def test_process_message_audio_flow(self, mock_get_agent):
         # We need to ensure that the mocked functions in `process_message` actually return what we expect.
         # Since we cannot easily patch internal calls when functions are in the same module without some effort,
         # let's mock the return values of the helper functions by replacing them temporarily in the module.
@@ -130,8 +138,9 @@ class TestAudioFeatures(unittest.TestCase):
             brain._analyze_tone_and_intent = MagicMock(return_value={"intent": "SALES_QUERY", "style_instruction": "Normal"})
             brain._audit_response = MagicMock(return_value=True)
 
-            brain._sales_agent = MagicMock()
-            brain._sales_agent.invoke.return_value = {'output': 'Tenemos un Toyota Corolla.'}
+            mock_agent = MagicMock()
+            mock_agent.invoke.return_value = {'output': 'Tenemos un Toyota Corolla.'}
+            mock_get_agent.return_value = mock_agent
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
@@ -154,7 +163,8 @@ class TestAudioFeatures(unittest.TestCase):
             brain._analyze_tone_and_intent = original_tone
             brain._audit_response = original_audit
 
-    def test_process_message_text_fallback(self):
+    @patch('brain._get_sales_agent')
+    def test_process_message_text_fallback(self, mock_get_agent):
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent
@@ -164,8 +174,13 @@ class TestAudioFeatures(unittest.TestCase):
             brain._text_to_speech = MagicMock(return_value=None)
             brain._analyze_tone_and_intent = MagicMock(return_value={"intent": "SALES_QUERY", "style_instruction": "Normal"})
 
-            brain._sales_agent = MagicMock()
-            brain._sales_agent.invoke.return_value = {'output': 'Respuesta texto fallback.'}
+            mock_agent = MagicMock()
+            mock_agent.invoke.return_value = {'output': 'Respuesta texto fallback.'}
+            mock_get_agent.return_value = mock_agent
+
+            # Fallback configuration if patch fails (Mock the underlying call)
+            mock_create = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
+            mock_create.return_value = mock_agent
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False

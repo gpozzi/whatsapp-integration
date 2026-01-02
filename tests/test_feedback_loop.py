@@ -29,8 +29,9 @@ class TestFeedbackLoop(unittest.TestCase):
     def setUp(self):
         brain._db_client = MagicMock()
         brain._safety_model = MagicMock()
-        brain._sales_agent = MagicMock()
+        # brain._sales_agent = MagicMock()
         brain._df_inventory = MagicMock()
+        brain._inventory_timestamp = brain.datetime.datetime.now(brain.datetime.timezone.utc)
 
         brain._check_is_duplicate = MagicMock(return_value=False)
         brain._manage_history = MagicMock(return_value="User: Hello\nBot: Hi")
@@ -110,16 +111,24 @@ class TestFeedbackLoop(unittest.TestCase):
         # NOTE: We need to patch services inside process_message because it re-calls _init_services
         with patch("brain._init_services", return_value=MagicMock()), \
              patch("brain._load_inventory", return_value=True), \
-             patch("brain._manage_history", return_value="Historial"):
+             patch("brain._manage_history", return_value="Historial"), \
+             patch("brain._get_sales_agent") as mock_get_agent: # Mock this!
+
+            # Fallback
+            mock_create = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
+            mock_agent = MagicMock()
+            mock_create.return_value = mock_agent
+            mock_get_agent.return_value = mock_agent
 
             result = brain.process_message("No", "12345")
 
         self.assertIn("Sorry", result)
-        brain._sales_agent.invoke.assert_not_called()
+        # brain._sales_agent.invoke.assert_not_called()
+        # Since _sales_agent is no longer global, we check the instance returned by mock_get_agent
+        mock_get_agent.return_value.invoke.assert_not_called()
 
     def test_process_message_flow_sales_query_with_feedback_request(self):
         """Integration test: process_message with query + feedback request."""
-        brain._sales_agent.invoke.return_value = {"output": "Here is a car"}
 
         # Sequence:
         # 1. _analyze_tone_and_intent -> SALES_QUERY
@@ -132,7 +141,16 @@ class TestFeedbackLoop(unittest.TestCase):
 
         with patch("brain._init_services", return_value=MagicMock()), \
              patch("brain._load_inventory", return_value=True), \
-             patch("brain._manage_history", return_value="Historial"):
+             patch("brain._manage_history", return_value="Historial"), \
+             patch("brain._get_sales_agent") as mock_get_agent:
+
+            mock_agent = MagicMock()
+            mock_get_agent.return_value = mock_agent
+            mock_agent.invoke.return_value = {"output": "Here is a car"}
+
+            # Fallback
+            mock_create = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
+            mock_create.return_value = mock_agent
 
             result = brain.process_message("Price of Toyota?", "12345")
 

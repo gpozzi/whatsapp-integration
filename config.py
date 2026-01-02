@@ -16,6 +16,7 @@ PROJECT_ID = os.environ.get("GCP_PROJECT") or os.environ.get("PROJECT_ID")
 LOCATION = os.environ.get("LOCATION", "us-central1")
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "(default)")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+INVENTORY_REFRESH_TIME_MINUTES = int(os.environ.get("INVENTORY_REFRESH_TIME_MINUTES", 60))
 
 # --- AUDIO & VOICE SETTINGS ---
 # Voces Estándar de Google Cloud TTS (Neural2 para mejor calidad)
