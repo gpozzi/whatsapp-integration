@@ -21,6 +21,24 @@ def send_whatsapp(phone, text):
     except Exception as e:
         config.logger.error(f"Error enviando WhatsApp: {e}")
 
+def mark_as_read(message_id):
+    """Marca el mensaje como leído en WhatsApp."""
+    try:
+        url = f"https://graph.facebook.com/v21.0/{config.PHONE_NUMBER_ID}/messages"
+        headers = {
+            "Authorization": f"Bearer {config.WHATSAPP_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        config.logger.error(f"Error marcando mensaje como leído: {e}")
+
 @functions_framework.http
 def whatsapp_webhook(request):
     """Entry Point de Google Cloud Functions."""
@@ -42,6 +60,11 @@ def whatsapp_webhook(request):
             if 'messages' in value:
                 msg = value['messages'][0]
                 phone = msg['from']
+
+                # Marcar como leído inmediatamente para evitar sensación de "colgado"
+                message_id = msg.get('id')
+                if message_id:
+                    mark_as_read(message_id)
                 
                 # Extracción de texto segura
                 text = ""
@@ -65,8 +88,11 @@ def whatsapp_webhook(request):
                     return "OK", 200
 
                 # --- LLAMADA AL CEREBRO ---
-                response = brain.process_message(text, phone)
-                send_whatsapp(phone, response)
+                response = brain.process_message(text, phone, message_id)
+                if response:
+                    send_whatsapp(phone, response)
+                else:
+                    config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
                 
             return "OK", 200
 
