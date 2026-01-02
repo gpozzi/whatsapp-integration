@@ -11,6 +11,7 @@ from google.cloud import firestore
 # AI Integrations
 from langchain_google_vertexai import ChatVertexAI
 from langchain_experimental.agents import create_pandas_dataframe_agent
+from langchain_core.messages import HumanMessage
 import config
 
 # --- ESTADO GLOBAL ---
@@ -117,12 +118,55 @@ def _load_inventory(llm_model: ChatVertexAI) -> bool:
         _sales_agent = None
         return False
 
+def _update_user_profile(phone: str, history: str):
+    """Extrae preferencias clave del usuario y actualiza su perfil a largo plazo.
+
+    Args:
+        phone (str): ID del usuario.
+        history (str): Historial de la conversación reciente.
+    """
+    if not _db_client or not _safety_model:
+        return
+
+    try:
+        # Usamos el modelo ligero para extraer datos estructurados
+        # No bloqueamos el hilo principal, esto podría ser asíncrono en un sistema mayor.
+        prompt = (
+            f"Analiza esta conversación y extrae preferencias del usuario (si las hay).\n"
+            f"HISTORIAL:\n{history}\n\n"
+            "Busca: 1. Presupuesto (ej: 15k). 2. Modelo/Marca de interés. 3. Nombre (si lo dijo).\n"
+            "Responde en JSON: {\"budget\": \"...\", \"model\": \"...\", \"name\": \"...\"}\n"
+            "Si no hay dato, pon null."
+        )
+
+        response = _safety_model.invoke(prompt).content.strip()
+        response = response.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(response)
+
+        # Solo actualizamos si hay datos relevantes
+        updates = {}
+        if data.get("budget"): updates["budget"] = data["budget"]
+        if data.get("model"): updates["last_interest"] = data["model"]
+        if data.get("name"): updates["name"] = data["name"]
+
+        if updates:
+            updates["last_updated"] = firestore.SERVER_TIMESTAMP
+            _db_client.collection("user_profiles").document(phone).set(updates, merge=True)
+            config.logger.info(f"Perfil actualizado para {phone}: {updates}")
+
+    except Exception as e:
+        # Fallo silencioso, no es crítico
+        config.logger.warning(f"Error actualizando perfil: {e}")
+
 def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optional[str] = None, clear: bool = False) -> str:
     """Gestiona el historial del chat con ventana de contexto inteligente y filtrado de higiene.
 
     Recupera, actualiza y formatea el historial del chat. Implementa una ventana deslizante
     basada en caracteres (~4000) y filtra mensajes de error técnico para
     mantener la pureza del contexto para el LLM.
+
+    Además, inyecta memoria a largo plazo (User Profile) si la sesión es nueva.
 
     Args:
         phone (str): El número de teléfono del usuario (ID del documento).
@@ -143,6 +187,8 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
         return ""
 
     history_list = []
+    is_new_session = False
+
     try:
         doc = doc_ref.get()
         if doc.exists:
@@ -160,11 +206,16 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
 
                 if (now - stored_ts) > datetime.timedelta(hours=CONTEXT_TIMEOUT_HOURS):
                     is_expired = True
+                    is_new_session = True
                     config.logger.info(f"🧹 Contexto expirado para {phone}. Reiniciando conversación.")
+            else:
+                is_new_session = True
 
             if not is_expired:
                 # Validación básica para asegurar lista de cadenas
                 history_list = [m for m in raw if isinstance(m, str)]
+        else:
+            is_new_session = True
 
     except Exception as e:
         config.logger.warning(f"Error leyendo historial: {e}")
@@ -174,6 +225,10 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
         history_list.append(f"Usuario: {user_text}")
         if bot_text:
             history_list.append(f"Bot: {bot_text}")
+            # Si el bot respondió, intentamos actualizar el perfil (asíncrono idealmente, aquí síncrono)
+            # Para no sobrecargar, lo hacemos de forma simple o al final del turno.
+            # En esta arquitectura simple, lo llamamos aquí.
+            _update_user_profile(phone, "\n".join(history_list[-4:])) # Solo analizamos lo último
         
         # Mantener un límite de almacenamiento razonable (ej. últimos 20 mensajes) para ahorrar espacio/costo,
         # mientras la lógica de ventana de contexto abajo maneja el límite "inteligente" de tokens.
@@ -190,6 +245,17 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
     selected_messages = []
     current_chars = 0
 
+    # Inyectar Perfil de Usuario si es sesión nueva o contexto vacío
+    profile_context = ""
+    if is_new_session:
+        try:
+            profile_doc = _db_client.collection("user_profiles").document(phone).get()
+            if profile_doc.exists:
+                p_data = profile_doc.to_dict()
+                profile_context = f"[MEMORIA A LARGO PLAZO: Usuario {p_data.get('name', 'Anónimo')}. Interés previo: {p_data.get('last_interest')}. Presupuesto: {p_data.get('budget')}.]\n"
+        except Exception as e:
+            config.logger.warning(f"Error leyendo perfil usuario: {e}")
+
     for msg in reversed(history_list):
         # Higiene: Omitir mensajes que contengan errores técnicos
         if any(bad in msg for bad in BAD_WORDS):
@@ -202,8 +268,11 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
         selected_messages.append(msg)
         current_chars += msg_len
 
-    # Restaurar orden cronológico
-    return "\n".join(reversed(selected_messages))
+    final_history = "\n".join(reversed(selected_messages))
+    if profile_context:
+        final_history = profile_context + final_history
+
+    return final_history
 
 def _audit_response(candidate_text: str) -> bool:
     """Evalúa la seguridad de la respuesta del bot usando el modelo Juez.
@@ -251,34 +320,149 @@ def _check_is_duplicate(message_id: str) -> bool:
         config.logger.error(f"Error verificando duplicado: {e}")
         return False
 
-def _classify_intent(user_text: str, history: str) -> str:
-    """Clasifica la intención del usuario usando el modelo ligero.
+def _find_similar_cars(query_context: str) -> str:
+    """Busca autos similares cuando no hay resultados exactos.
+
+    Args:
+        query_context (str): Texto que describe lo que se buscaba (para extraer precio/tipo).
+        En esta implementación simple, usamos el DataFrame global y heurísticas básicas
+        o le pedimos al LLM que genere una query de Pandas más amplia.
+
+    Returns:
+        str: Texto con sugerencias.
+    """
+    if _df_inventory is None or _df_inventory.empty:
+        return ""
+
+    try:
+        # Estrategia: Le pedimos al Agente que busque "alternativas" explícitamente.
+        # Pero como ya estamos fuera del flujo del agente, hacemos una búsqueda manual rápida
+        # si pudiéramos extraer el criterio.
+        #
+        # ALTERNATIVA MEJOR: Re-invocar al agente con un prompt específico de "Cross-selling".
+
+        cross_sell_prompt = (
+            f"El usuario buscaba: '{query_context}'. No se encontró exacto.\n"
+            "TU TAREA: Buscar en el dataframe autos SIMILARES (mismo tipo de carrocería O precio +/- 20%).\n"
+            "Si encuentras algo, recomiéndalo sutilmente (máximo 2 opciones).\n"
+            "Si no, di 'No encontré similares'."
+        )
+
+        response = _sales_agent.invoke(cross_sell_prompt)
+        output = response['output']
+
+        if "No encontré" in output or "Agent stopped" in output:
+            return ""
+
+        return f"\n\n💡 Sugerencia: {output}"
+
+    except Exception as e:
+        config.logger.error(f"Error buscando similares: {e}")
+        return ""
+
+def _analyze_tone_and_intent(user_text: str, history: str) -> dict:
+    """Clasifica la intención y detecta el tono del usuario.
 
     Args:
         user_text (str): El mensaje actual del usuario.
         history (str): El historial de la conversación.
 
     Returns:
-        str: La categoría detectada (FEEDBACK_POS, FEEDBACK_NEG, SALES_QUERY, OTHER).
+        dict: {'intent': str, 'style_instruction': str}
     """
+    default_result = {"intent": "SALES_QUERY", "style_instruction": "Sé útil y conciso."}
+
     try:
         if not _safety_model:
-            return "SALES_QUERY"
+            return default_result
 
-        prompt = config.INTENT_CLASSIFIER_PROMPT.format(history=history, user_input=user_text)
-        intent = _safety_model.invoke(prompt).content.strip().upper()
+        # Usamos un prompt combinado para ahorrar latencia/costo
+        prompt = config.INTENT_AND_TONE_PROMPT.format(history=history, user_input=user_text)
+        response_text = _safety_model.invoke(prompt).content.strip()
 
-        # Validación simple para asegurar que retorna una categoría válida
-        valid_intents = ["FEEDBACK_POS", "FEEDBACK_NEG", "SALES_QUERY", "OTHER"]
-        if any(v in intent for v in valid_intents):
-            # Retornar la categoría que coincida
-            for v in valid_intents:
-                if v in intent:
-                    return v
-        return "SALES_QUERY" # Fallback por defecto
+        # Parseo simple de JSON o formato estructurado
+        # Esperamos algo como: CATEGORY: SALES_QUERY | TONE: CASUAL
+
+        intent = "SALES_QUERY"
+        style_instruction = "Sé útil y conciso."
+
+        if "FEEDBACK_POS" in response_text: intent = "FEEDBACK_POS"
+        elif "FEEDBACK_NEG" in response_text: intent = "FEEDBACK_NEG"
+        elif "OTHER" in response_text: intent = "OTHER"
+
+        if "DIRECTO" in response_text:
+            style_instruction = "El usuario es directo. Responde con datos precisos, sin rodeos, usa listas."
+        elif "DUBITATIVO" in response_text:
+            style_instruction = "El usuario está indeciso. Actúa como un asesor empático, haz preguntas guía y sé muy amable."
+        elif "ENFADADO" in response_text:
+            style_instruction = "El usuario parece molesto. Sé extremadamente formal, discúlpate si es necesario y ofrece soluciones rápidas."
+        elif "CASUAL" in response_text:
+            style_instruction = "El usuario es casual. Usa un tono amigable, puedes usar emojis y ser conversacional."
+
+        return {"intent": intent, "style_instruction": style_instruction}
+
     except Exception as e:
-        config.logger.error(f"Error clasificando intención: {e}")
-        return "SALES_QUERY"
+        config.logger.error(f"Error analizando tono/intención: {e}")
+        return default_result
+
+def _analyze_image(image_data: bytes, user_text: str) -> str:
+    """Analiza una imagen enviada por el usuario para extraer información de autos.
+
+    Args:
+        image_data (bytes): Los datos binarios de la imagen.
+        user_text (str): El texto acompañante del usuario.
+
+    Returns:
+        str: Descripción enriquecida de la imagen o mensaje de rechazo si no es un auto.
+    """
+    if not _safety_model:
+        return ""
+
+    try:
+        # Prompt multimodal para Gemini
+        message = HumanMessage(
+            content=[
+                {
+                    "type": "text",
+                    "text": f"Analiza esta imagen. El usuario dice: '{user_text}'.\n"
+                            "1. ¿Es un auto? (SI/NO)\n"
+                            "2. Si es SI: Describe marca, modelo aproximado, color y tipo (SUV, Sedán, etc).\n"
+                            "3. Si es NO: Responde 'NO_AUTO'."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_data}"} # Gemini client handles this if correctly formatted, but raw bytes support varies by client version.
+                    # Best practice with ChatVertexAI/LangChain: pass the blob if supported or base64.
+                    # Assuming langchain-google-vertexai handles base64 encoded data uri or raw image parts.
+                    # Let's use a simpler prompt structure if possible or rely on the library to handle bytes.
+                }
+            ]
+        )
+
+        # We need to base64 encode the bytes first for the data URI format
+        import base64
+        b64_image = base64.b64encode(image_data).decode('utf-8')
+
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": f"Analiza esta imagen. El usuario dice: '{user_text}'.\n"
+                                         "1. ¿Es un auto? (SI/NO)\n"
+                                         "2. Si es SI: Describe marca, modelo aproximado, color y tipo (SUV, Sedán, etc).\n"
+                                         "3. Si es NO: Responde 'NO_AUTO'."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}}
+            ]
+        )
+
+        response = _safety_model.invoke([message]).content.strip()
+
+        if "NO_AUTO" in response:
+            return "NO_AUTO"
+
+        return response
+
+    except Exception as e:
+        config.logger.error(f"Error analizando imagen: {e}")
+        return "ERROR_IMAGE"
 
 def _should_ask_feedback(bot_response: str) -> bool:
     """Decide si se debe pedir feedback al usuario sobre la respuesta generada.
@@ -340,7 +524,7 @@ def _handle_negative_feedback(phone: str, history: str) -> str:
         config.logger.error(f"Error manejando feedback negativo: {e}")
         return default_response
 
-def process_message(user_text: str, phone_number: str, message_id: Optional[str] = None) -> Optional[str]:
+def process_message(user_text: str, phone_number: str, message_id: Optional[str] = None, image_data: Optional[bytes] = None) -> Optional[str]:
     """Función principal de orquestación para procesar mensajes entrantes.
 
     Maneja inicialización, deduplicación, carga de inventario, gestión de contexto,
@@ -350,6 +534,7 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         user_text (str): El texto recibido del usuario.
         phone_number (str): El número de teléfono del usuario.
         message_id (Optional[str]): El ID único del mensaje para deduplicación.
+        image_data (Optional[bytes]): Datos binarios de la imagen si se envió una.
 
     Returns:
         Optional[str]: El texto de respuesta para enviar, o None si es duplicado.
@@ -380,26 +565,49 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     # Gestión de Contexto
     history = _manage_history(phone_number)
 
-    # 1. Clasificación de Intención
-    intent = _classify_intent(user_text, history)
-    config.logger.info(f"Intención detectada: {intent}")
+    # 1. Análisis Multimodal (si hay imagen)
+    image_context = ""
+    if image_data:
+        image_analysis = _analyze_image(image_data, user_text)
+        if image_analysis == "NO_AUTO":
+            return "Lo siento, solo puedo analizar imágenes de autos para ayudarte a buscar en el inventario. 🚗"
+        elif image_analysis != "ERROR_IMAGE":
+            image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
+            config.logger.info(f"Imagen analizada: {image_analysis}")
+
+    # 2. Análisis de Intención y Tono
+    analysis = _analyze_tone_and_intent(user_text, history)
+    intent = analysis["intent"]
+    style_instruction = analysis["style_instruction"]
+    config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
 
     try:
         final_text = ""
 
         if intent == "FEEDBACK_NEG":
-            # 2. Manejo de Feedback Negativo
+            # 3. Manejo de Feedback Negativo
             final_text = _handle_negative_feedback(phone_number, history)
 
         elif intent == "FEEDBACK_POS":
-             # 3. Manejo de Feedback Positivo
+             # 4. Manejo de Feedback Positivo
              final_text = "¡Gracias! Me alegra haberte ayudado. 😊 ¿Buscas algo más?"
 
         else:
-            # 4. Flujo Normal (Sales Agent)
-            prompt = f"HISTORIAL:\n{history}\n\nCONSULTA: '{user_text}'"
+            # 5. Flujo Normal (Sales Agent)
+            prompt = f"HISTORIAL:\n{history}{image_context}\n\nCONSULTA: '{user_text}'\n\nINSTRUCCIÓN DE TONO: {style_instruction}"
+            if image_context:
+                prompt += "\nNOTA: El usuario busca algo similar a lo que se describe en [INFO IMAGEN]."
+
             response = _sales_agent.invoke(prompt)
             final_text = response['output']
+
+            # Lógica de Cross-Selling (Si la respuesta indica vacío)
+            # Detectamos frases típicas de "no hay resultados"
+            no_stock_phrases = ["no tengo", "no encuentro", "no hay", "0 resultados", "no está disponible"]
+            if any(p in final_text.lower() for p in no_stock_phrases):
+                suggestion = _find_similar_cars(user_text)
+                if suggestion:
+                    final_text += suggestion
 
             # Filtro Estético/Errores
             if "Agent stopped" in final_text or "iteration limit" in final_text:

@@ -14,6 +14,8 @@ sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
+sys.modules['langchain_core'] = MagicMock()
+sys.modules['langchain_core.messages'] = MagicMock()
 
 # Ensure we can import brain
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -80,16 +82,20 @@ class TestDeduplication(unittest.TestCase):
         # Mock safety auditor
         brain._safety_model = MagicMock()
         # Mock sequence:
-        # 1. _classify_intent -> "SALES_QUERY"
+        # 1. _analyze_tone_and_intent -> "SALES_QUERY"
         # 2. _audit_response -> "APROBADO" (contains SAFE implicit check)
         # 3. _should_ask_feedback -> "NO"
         brain._safety_model.invoke.side_effect = [
-            MagicMock(content="SALES_QUERY"),
+            MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"),
             MagicMock(content="APROBADO"),
             MagicMock(content="NO")
         ]
 
-        response = brain.process_message("Hello", "123456", "msg_new_123")
+        # Patch _load_inventory inside process_message to avoid re-init logic failing
+        with patch('brain._load_inventory', return_value=True), \
+             patch('brain._update_user_profile'): # Avoid this call
+
+            response = brain.process_message("Hello", "123456", "msg_new_123")
 
         # Verification
         self.assertEqual(response, "Response Text")
