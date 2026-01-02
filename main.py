@@ -1,5 +1,6 @@
 import functions_framework
 import requests
+import time
 import config
 import brain  # Importamos nuestro módulo de lógica
 
@@ -60,6 +61,16 @@ def whatsapp_webhook(request):
             if 'messages' in value:
                 msg = value['messages'][0]
                 phone = msg['from']
+
+                # Verificar antigüedad del mensaje (evitar procesar reintentos de hace horas)
+                # Timestamp de WhatsApp viene en segundos (str)
+                msg_ts = int(msg.get('timestamp', 0))
+                now_ts = int(time.time())
+
+                # Si el mensaje tiene más de 5 minutos de antigüedad, lo ignoramos (retornando 200 para frenar el reintento)
+                if now_ts - msg_ts > 300:
+                    config.logger.warning(f"⏳ Mensaje descartado por antigüedad ({now_ts - msg_ts}s). ID: {msg.get('id')}")
+                    return "OK", 200
 
                 # Marcar como leído inmediatamente para evitar sensación de "colgado"
                 message_id = msg.get('id')
