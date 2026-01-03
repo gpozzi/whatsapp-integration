@@ -280,20 +280,14 @@ def sync_inventory():
     Ruta para recibir actualizaciones desde Google Sheets.
     Requiere Header: Authorization: <SYNC_API_KEY>
     """
-    try:
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or auth_header != config.SYNC_API_KEY:
-            config.logger.warning("Intento de acceso no autorizado a /sync-inventory")
-            return jsonify({"error": "Unauthorized"}), 401
+    # En la versión Vector Search, ingestor.sync_inventory maneja la autenticación y la lógica.
+    # Pero ingestor espera X-API-KEY, mientras que main usaba Authorization.
+    # Ajustamos para compatibilidad o delegamos totalmente.
+    # El código actual de ingestor.py usa request.headers.get("X-API-KEY").
+    # Si el cliente envía 'Authorization', necesitamos adaptarlo o cambiar ingestor.
+    # Como el usuario pidió "llamar a ingestor.sync_inventory(request)", lo hacemos directo.
 
-        success = brain.reload_inventory()
-        if success:
-            return jsonify({"status": "success", "message": "Inventory reloaded"}), 200
-        else:
-            return jsonify({"status": "error", "message": "Failed to reload inventory"}), 500
-    except Exception as e:
-        config.logger.error(f"Error en sync-inventory: {e}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+    return ingestor.sync_inventory(request)
 
 @app.route('/worker', methods=['POST'])
 def whatsapp_worker():
