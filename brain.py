@@ -764,13 +764,15 @@ def _text_to_speech(text: str, gender: str) -> Optional[bytes]:
         # 1. Intento Principal (Voces Neurales)
         voice_name = config.TTS_VOICE_MALE if gender == "MALE" else config.TTS_VOICE_FEMALE
 
+        # Configuración común (fuera del try interno para que esté disponible en fallback)
+        audio_config = texttospeech.AudioConfig(
+            audio_encoding=texttospeech.AudioEncoding.MP3
+        )
+
         try:
             voice = texttospeech.VoiceSelectionParams(
                 language_code="es-US",
                 name=voice_name
-            )
-            audio_config = texttospeech.AudioConfig(
-                audio_encoding=texttospeech.AudioEncoding.MP3
             )
             response = client.synthesize_speech(
                 input=input_text, voice=voice, audio_config=audio_config
