@@ -41,8 +41,9 @@ class TestAudioFeatures(unittest.TestCase):
         brain.build = sys.modules["googleapiclient.discovery"].build
         brain.HumanMessage = sys.modules["langchain_core.messages"].HumanMessage
 
-        config.TTS_VOICE_MALE = "male-voice"
-        config.TTS_VOICE_FEMALE = "female-voice"
+        # Mock config values using patch to avoid polluting global state
+        self.config_patcher = patch.multiple(config, TTS_VOICE_MALE="male-voice", TTS_VOICE_FEMALE="female-voice")
+        self.config_patcher.start()
 
         def voice_params_side_effect(name=None, language_code=None):
             m = MagicMock()
@@ -193,6 +194,9 @@ class TestAudioFeatures(unittest.TestCase):
             brain._analyze_audio = original_analyze
             brain._text_to_speech = original_tts
             brain._analyze_tone_and_intent = original_tone
+
+    def tearDown(self):
+        self.config_patcher.stop()
 
 if __name__ == '__main__':
     unittest.main()

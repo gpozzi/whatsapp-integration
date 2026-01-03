@@ -22,7 +22,7 @@ INVENTORY_REFRESH_TIME_MINUTES = int(os.environ.get("INVENTORY_REFRESH_TIME_MINU
 # --- AUDIO & VOICE SETTINGS ---
 # Voces Estándar de Google Cloud TTS (Neural2 para mejor calidad)
 TTS_VOICE_MALE = "es-US-Neural2-B"
-TTS_VOICE_FEMALE = "es-US-Neural2-A"
+TTS_VOICE_FEMALE = "es-US-Neural2-C"
 
 # --- VALIDACIÓN DE LANGSMITH ---
 # Si el tracing está activo pero no hay API Key válida, lo desactivamos para evitar errores 401.
