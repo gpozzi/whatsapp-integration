@@ -1,1 +1,1 @@
-web: functions-framework --target=whatsapp_webhook
+web: gunicorn main:app

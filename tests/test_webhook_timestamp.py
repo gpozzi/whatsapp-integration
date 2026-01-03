@@ -53,11 +53,11 @@ class TestMainTimestamp(unittest.TestCase):
         # Mock brain inside main instance
         main.brain = MagicMock()
 
+        # Setup Flask test client
+        self.client = main.app.test_client()
+
     def test_old_message_ignored(self):
         # Setup
-        mock_req = MagicMock()
-        mock_req.method = "POST"
-
         # 20 minutes ago
         old_ts = int(time.time()) - 1200
 
@@ -76,14 +76,14 @@ class TestMainTimestamp(unittest.TestCase):
                 }]
             }]
         }
-        mock_req.get_json.return_value = payload
 
         # Act
-        response = main.whatsapp_webhook(mock_req)
+        response = self.client.post('/webhook', json=payload)
 
         # Assert
         # Should return "OK", 200 (to stop retries)
-        self.assertEqual(response, ("OK", 200))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.decode('utf-8'), "OK")
 
         # Should NOT call publisher.publish
         if main.publisher:
@@ -91,9 +91,6 @@ class TestMainTimestamp(unittest.TestCase):
 
     def test_new_message_processed(self):
         # Setup
-        mock_req = MagicMock()
-        mock_req.method = "POST"
-
         # 1 minute ago
         recent_ts = int(time.time()) - 60
 
@@ -112,7 +109,6 @@ class TestMainTimestamp(unittest.TestCase):
                 }]
             }]
         }
-        mock_req.get_json.return_value = payload
 
         # Mock publisher future result
         if main.publisher:
@@ -121,10 +117,11 @@ class TestMainTimestamp(unittest.TestCase):
             future_mock.result.return_value = "msg_id"
 
         # Act
-        response = main.whatsapp_webhook(mock_req)
+        response = self.client.post('/webhook', json=payload)
 
         # Assert
-        self.assertEqual(response, ("OK", 200))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.decode('utf-8'), "OK")
 
         # Verify publish was called
         if main.publisher:

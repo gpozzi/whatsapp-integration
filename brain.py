@@ -130,6 +130,15 @@ def _load_inventory() -> bool:
         _inventory_timestamp = None
         return False
 
+def reload_inventory() -> bool:
+    """Fuerza la recarga del inventario desde Google Sheets.
+
+    Returns:
+        bool: True si la recarga fue exitosa, False en caso contrario.
+    """
+    config.logger.info("🔄 Solicitud de recarga de inventario recibida.")
+    return _load_inventory()
+
 def _get_sales_agent(llm_model: ChatVertexAI):
     """Obtiene una instancia fresca del agente de ventas con el inventario actualizado.
 
