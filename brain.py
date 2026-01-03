@@ -3,25 +3,19 @@ import logging
 import json
 from typing import Optional, List, Union
 
-import pandas as pd
 import google.auth
-from googleapiclient.discovery import build
 from google.cloud import firestore
+from google.cloud.firestore import Vector
 from google.cloud import texttospeech
 import base64
 
 # AI Integrations
-from langchain_google_vertexai import ChatVertexAI
-from langchain_experimental.agents import create_pandas_dataframe_agent
-from langchain_experimental.tools.python.tool import PythonAstREPLTool
+from langchain_google_vertexai import ChatVertexAI, VertexAIEmbeddings
 from langchain_core.messages import HumanMessage
 import config
-from security import validate_python_code, SecurityError
 
 # --- ESTADO GLOBAL ---
 _db_client: Optional[firestore.Client] = None
-_df_inventory: Optional[pd.DataFrame] = None
-_inventory_timestamp: Optional[datetime.datetime] = None
 _safety_model: Optional[ChatVertexAI] = None
 
 # --- CONSTANTES ---
@@ -32,26 +26,6 @@ MODEL_TEMP = 0.0
 CONTEXT_CHAR_LIMIT = 4000
 CONTEXT_TIMEOUT_HOURS = 6
 BAD_WORDS = ["Error", "Processing", "Agent stopped"]
-
-class SafePythonAstREPLTool(PythonAstREPLTool):
-    """Herramienta de ejecución de Python con validación de seguridad (AST)."""
-
-    name: str = "python_repl_ast"
-    description: str = (
-        "A Python shell. Use this to execute python commands. "
-        "Input should be a valid python command. "
-        "When using this tool, sometimes output is abbreviated - "
-        "make sure it does not look abbreviated before using it in your answer."
-    )
-
-    def _run(self, query: str, run_manager=None) -> str:
-        try:
-            validate_python_code(query)
-            return super()._run(query, run_manager=run_manager)
-        except SecurityError as e:
-            return f"SecurityError: {str(e)}"
-        except Exception as e:
-            return f"Error: {str(e)}"
 
 def _init_services() -> ChatVertexAI:
     """Inicializa los servicios de Google Cloud y los modelos de IA.
@@ -67,8 +41,16 @@ def _init_services() -> ChatVertexAI:
         Exception: Si falla la inicialización de algún servicio.
     """
     global _db_client, _safety_model
-    if _db_client:
-        return  # Servicios ya inicializados (la lógica en process_message maneja el retorno)
+    if _db_client and _safety_model:
+        # Si ya están inicializados, retornamos una nueva instancia del modelo de ventas
+        # para asegurar frescura o reutilizar si se prefiere.
+        # En este diseño, retornamos una nueva instancia para el agente principal.
+        return ChatVertexAI(
+            model_name=MODEL_SALES,
+            project=config.PROJECT_ID,
+            location=MODEL_LOCATION,
+            temperature=MODEL_TEMP,
+        )
 
     try:
         config.logger.info("🔌 Conectando servicios...")
@@ -94,85 +76,6 @@ def _init_services() -> ChatVertexAI:
     except Exception as e:
         config.logger.critical(f"Error fatal inicializando servicios: {e}")
         raise
-
-def _load_inventory() -> bool:
-    """Descarga el inventario desde Google Sheets.
-
-    Returns:
-        bool: True si el inventario se cargó exitosamente, False en caso contrario.
-    """
-    global _df_inventory, _inventory_timestamp
-    try:
-        config.logger.info("📥 Descargando inventario...")
-        creds, _ = google.auth.default()
-        service = build('sheets', 'v4', credentials=creds)
-
-        meta = service.spreadsheets().get(spreadsheetId=config.SPREADSHEET_ID).execute()
-        sheet_title = meta['sheets'][0]['properties']['title']
-        result = service.spreadsheets().values().get(
-            spreadsheetId=config.SPREADSHEET_ID, range=f"'{sheet_title}'!A:AZ"
-        ).execute()
-
-        rows = result.get('values', [])
-        if len(rows) < 2:
-            return False
-
-        headers = [h.lower().strip() for h in rows[0]]
-        _df_inventory = pd.DataFrame(rows[1:], columns=headers)
-        _inventory_timestamp = datetime.datetime.now(datetime.timezone.utc)
-
-        config.logger.info(f"✅ Inventario cargado: {len(_df_inventory)} autos.")
-        return True
-    except Exception as e:
-        config.logger.error(f"Error cargando inventario: {e}")
-        # Revertir estado parcial para evitar inconsistencias
-        _df_inventory = None
-        _inventory_timestamp = None
-        return False
-
-def reload_inventory() -> bool:
-    """Fuerza la recarga del inventario desde Google Sheets.
-
-    Returns:
-        bool: True si la recarga fue exitosa, False en caso contrario.
-    """
-    config.logger.info("🔄 Solicitud de recarga de inventario recibida.")
-    return _load_inventory()
-
-def _get_sales_agent(llm_model: ChatVertexAI):
-    """Obtiene una instancia fresca del agente de ventas con el inventario actualizado.
-
-    Verifica si el inventario necesita recarga (TTL) antes de crear el agente.
-    """
-    global _df_inventory, _inventory_timestamp
-
-    # Verificar si el inventario es stale o no existe
-    needs_reload = False
-    if _df_inventory is None or _inventory_timestamp is None:
-        needs_reload = True
-    else:
-        now = datetime.datetime.now(datetime.timezone.utc)
-        if (now - _inventory_timestamp) > datetime.timedelta(minutes=config.INVENTORY_REFRESH_TIME_MINUTES):
-            needs_reload = True
-            config.logger.info("⌛ Inventario caducado (TTL). Recargando...")
-
-    if needs_reload:
-        if not _load_inventory():
-             # Si falla la recarga, pero teníamos datos viejos, podríamos decidir usarlos o fallar.
-             # Aquí fallamos si no tenemos nada. Si tenemos algo viejo, _df_inventory podría ser None si falló.
-             if _df_inventory is None:
-                raise Exception("No se pudo cargar el inventario.")
-
-    # Crear una nueva instancia del agente para este request
-    return create_pandas_dataframe_agent(
-        llm_model,
-        _df_inventory,
-        verbose=True,
-        allow_dangerous_code=True,
-        prefix=config.SALES_AGENT_PREFIX,
-        agent_executor_kwargs={"handle_parsing_errors": True},
-        max_iterations=4,
-    )
 
 def _update_user_profile(phone: str, history: str):
     """Extrae preferencias clave del usuario y actualiza su perfil a largo plazo.
@@ -376,40 +279,6 @@ def _check_is_duplicate(message_id: str) -> bool:
         config.logger.error(f"Error verificando duplicado: {e}")
         return False
 
-def _find_similar_cars(query_context: str, sales_agent) -> str:
-    """Busca autos similares cuando no hay resultados exactos.
-
-    Args:
-        query_context (str): Texto que describe lo que se buscaba (para extraer precio/tipo).
-        sales_agent: La instancia del agente a usar.
-
-    Returns:
-        str: Texto con sugerencias.
-    """
-    if _df_inventory is None or _df_inventory.empty:
-        return ""
-
-    try:
-        # Estrategia: Le pedimos al Agente que busque "alternativas" explícitamente.
-        cross_sell_prompt = (
-            f"El usuario buscaba: '{query_context}'. No se encontró exacto.\n"
-            "TU TAREA: Buscar en el dataframe autos SIMILARES (mismo tipo de carrocería O precio +/- 20%).\n"
-            "Si encuentras algo, recomiéndalo sutilmente (máximo 2 opciones).\n"
-            "Si no, di 'No encontré similares'."
-        )
-
-        response = sales_agent.invoke(cross_sell_prompt)
-        output = response['output']
-
-        if "No encontré" in output or "Agent stopped" in output:
-            return ""
-
-        return f"\n\n💡 Sugerencia: {output}"
-
-    except Exception as e:
-        config.logger.error(f"Error buscando similares: {e}")
-        return ""
-
 def _analyze_tone_and_intent(user_text: str, history: str) -> dict:
     """Clasifica la intención y detecta el tono del usuario.
 
@@ -470,26 +339,6 @@ def _analyze_image(image_data: bytes, user_text: str) -> str:
 
     try:
         # Prompt multimodal para Gemini
-        message = HumanMessage(
-            content=[
-                {
-                    "type": "text",
-                    "text": f"Analiza esta imagen. El usuario dice: '{user_text}'.\n"
-                            "1. ¿Es un auto? (SI/NO)\n"
-                            "2. Si es SI: Describe marca, modelo aproximado, color y tipo (SUV, Sedán, etc).\n"
-                            "3. Si es NO: Responde 'NO_AUTO'."
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_data}"} # Gemini client handles this if correctly formatted, but raw bytes support varies by client version.
-                    # Best practice with ChatVertexAI/LangChain: pass the blob if supported or base64.
-                    # Assuming langchain-google-vertexai handles base64 encoded data uri or raw image parts.
-                    # Let's use a simpler prompt structure if possible or rely on the library to handle bytes.
-                }
-            ]
-        )
-
-        # We need to base64 encode the bytes first for the data URI format
         import base64
         b64_image = base64.b64encode(image_data).decode('utf-8')
 
@@ -574,10 +423,63 @@ def _handle_negative_feedback(phone: str, history: str) -> str:
         config.logger.error(f"Error manejando feedback negativo: {e}")
         return default_response
 
+def _search_cars(query: str) -> str:
+    """Busca autos en el inventario usando Vector Search.
+
+    Args:
+        query (str): La consulta del usuario.
+
+    Returns:
+        str: Texto con los resultados relevantes del inventario.
+    """
+    try:
+        if not _db_client:
+            return "No se pudo conectar a la base de datos."
+
+        config.logger.info(f"🔎 Buscando autos para: {query}")
+
+        # 1. Generar Embedding de la consulta
+        embeddings_service = VertexAIEmbeddings(
+            model_name="text-embedding-004",
+            project=config.PROJECT_ID,
+            location=MODEL_LOCATION
+        )
+        query_vector = embeddings_service.embed_query(query)
+
+        # 2. Búsqueda Vectorial en Firestore
+        # Se asume que la colección 'inventory_vectors' tiene un índice vectorial en 'embedding_field'
+        collection = _db_client.collection("inventory_vectors")
+
+        # Nota: find_nearest requiere que el índice vectorial exista.
+        results = collection.find_nearest(
+            vector_field="embedding_field",
+            query_vector=Vector(query_vector),
+            distance_measure=firestore.DistanceMeasure.EUCLIDEAN, # O COSINE, según configuración del índice
+            limit=5,
+            distance_result_field="distance"
+        ).get()
+
+        if not results:
+            return "No encontré autos que coincidan exactamente con esa descripción."
+
+        # 3. Formatear resultados
+        info = []
+        for doc in results:
+            data = doc.to_dict()
+            # Omitimos el embedding gigante en la respuesta al LLM
+            data.pop("embedding_field", None)
+            info.append(str(data))
+
+        return "\n---\n".join(info)
+
+    except Exception as e:
+        config.logger.error(f"Error en Vector Search: {e}")
+        return "Tuve un problema buscando en el inventario."
+
 def process_message(user_text: str, phone_number: str, message_id: Optional[str] = None, image_data: Optional[bytes] = None, audio_data: Optional[bytes] = None) -> Union[str, bytes, None]:
     """Función principal de orquestación para procesar mensajes entrantes.
 
-    Maneja inicialización, deduplicación, carga de inventario, gestión de contexto,
+    Maneja inicialización, deduplicación, Vector Search, gestión de contexto,
     invocación del LLM, manejo de errores y auditoría de seguridad.
 
     Admite texto, imagen y audio. Si la entrada es audio, la respuesta será audio (bytes).
@@ -592,29 +494,12 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     Returns:
         Union[str, bytes, None]: El texto (str) o audio (bytes) de respuesta, o None si es duplicado.
     """
-    # Asegurar que los servicios estén listos (retorna instancia del LLM de Ventas)
-    primary_model = _init_services()
+    # Asegurar que los servicios estén listos
+    sales_llm = _init_services()
     
     # Deduplicación
     if _check_is_duplicate(message_id):
         return None
-
-    # Obtener instancia del agente (carga inventario si es necesario)
-    try:
-        # Si _init_services retornó None (porque _db_client ya existía), necesitamos asegurar una instancia.
-        model_to_use = primary_model
-        if not model_to_use:
-             model_to_use = ChatVertexAI(
-                model_name=MODEL_SALES,
-                project=config.PROJECT_ID,
-                location=MODEL_LOCATION,
-                temperature=MODEL_TEMP,
-            )
-
-        sales_agent = _get_sales_agent(model_to_use)
-    except Exception as e:
-        config.logger.error(f"Error obteniendo agente de ventas: {e}")
-        return "El sistema se está actualizando, dame un minuto..."
 
     # 0. Procesamiento de Audio (si existe)
     # Detectamos género y transcribimos para usarlo como 'user_text'
@@ -657,32 +542,34 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
              final_text = "¡Gracias! Me alegra haberte ayudado. 😊 ¿Buscas algo más?"
 
         else:
-            # 5. Flujo Normal (Sales Agent)
-            prompt = f"HISTORIAL:\n{history}{image_context}\n\nCONSULTA: '{user_text}'\n\nINSTRUCCIÓN DE TONO: {style_instruction}"
+            # 5. Flujo Normal (RAG con Vector Search)
+
+            # Buscar información relevante en el inventario
+            search_query = user_text
             if image_context:
-                prompt += "\nNOTA: El usuario busca algo similar a lo que se describe en [INFO IMAGEN]."
+                search_query += f" {image_context}"
 
-            response = sales_agent.invoke(prompt)
-            final_text = response['output']
+            inventory_context = _search_cars(search_query)
 
-            # Lógica de Cross-Selling (Si la respuesta indica vacío)
-            # Detectamos frases típicas de "no hay resultados"
-            no_stock_phrases = ["no tengo", "no encuentro", "no hay", "0 resultados", "no está disponible"]
-            if any(p in final_text.lower() for p in no_stock_phrases):
-                suggestion = _find_similar_cars(user_text, sales_agent)
-                if suggestion:
-                    final_text += suggestion
+            # Construir Prompt RAG
+            prompt = (
+                f"Eres Jules, un asistente de ventas de autos experto y amable.\n"
+                f"Usa la siguiente información del INVENTARIO para responder al usuario.\n"
+                f"Si la información no está en el inventario, dilo honestamente, pero ofrece alternativas si las ves.\n\n"
+                f"INVENTARIO RELEVANTE:\n{inventory_context}\n\n"
+                f"HISTORIAL:\n{history}{image_context}\n\n"
+                f"CONSULTA USUARIO: '{user_text}'\n\n"
+                f"INSTRUCCIÓN DE TONO: {style_instruction}\n"
+            )
 
-            # Filtro Estético/Errores
-            if "Agent stopped" in final_text or "iteration limit" in final_text:
-                config.logger.warning("⚠️ Loop detectado y ocultado.")
-                final_text = "¡Uy! Me mareé buscando en tantos autos 😵‍💫. ¿Podrías ser un poco más específico con lo que buscas? (Ej: Toyota Corolla 2020)"
+            response = sales_llm.invoke(prompt)
+            final_text = response.content
 
             # Auditoría de Seguridad
             if not _audit_response(final_text):
                 return "No puedo procesar esa solicitud por motivos de seguridad."
 
-            # 5. Decisión de Feedback (Supervisor)
+            # 6. Decisión de Feedback (Supervisor)
             if _should_ask_feedback(final_text):
                 final_text += " (¿Te sirvió esta info? Responde SÍ o NO)"
 
