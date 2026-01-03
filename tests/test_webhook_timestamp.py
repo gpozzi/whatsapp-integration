@@ -79,7 +79,8 @@ class TestMainTimestamp(unittest.TestCase):
         mock_req.get_json.return_value = payload
 
         # Act
-        response = main.whatsapp_webhook(mock_req)
+        with main.app.test_request_context(method="POST", json=payload):
+            response = main.whatsapp_webhook()
 
         # Assert
         # Should return "OK", 200 (to stop retries)
@@ -121,7 +122,8 @@ class TestMainTimestamp(unittest.TestCase):
             future_mock.result.return_value = "msg_id"
 
         # Act
-        response = main.whatsapp_webhook(mock_req)
+        with main.app.test_request_context(method="POST", json=payload):
+            response = main.whatsapp_webhook()
 
         # Assert
         self.assertEqual(response, ("OK", 200))
