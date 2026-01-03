@@ -3,9 +3,15 @@ import requests
 import time
 import json
 import base64
+from flask import Flask, request, jsonify
+import gunicorn # Ensure imports are present as requested
 from google.cloud import pubsub_v1
 import config
 import brain
+import ingestor
+
+# --- FLASK APP INITIALIZATION ---
+app = Flask(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -182,10 +188,17 @@ def _process_message_logic(msg, phone):
 # --- WEBHOOK ROUTES ---
 
 @app.route('/webhook', methods=['GET', 'POST'])
+# --- ROUTE HANDLERS ---
+
+@app.route("/", methods=["GET", "POST"])
 def whatsapp_webhook():
     """
     Entrada Híbrida: Maneja verificación, mensajes de WhatsApp y mensajes de Pub/Sub.
     """
+    # 0. Enrutamiento para Sincronización (/sync-inventory)
+    if request.path == "/sync-inventory":
+        return ingestor.sync_inventory(request)
+
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
         if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
@@ -333,3 +346,89 @@ def whatsapp_worker():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
+@app.route("/sync-inventory", methods=["POST"])
+def sync_inventory():
+    """
+    Endpoint para recibir actualizaciones de inventario desde Google Sheets.
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {config.SYNC_API_KEY}":
+        config.logger.warning("Intento no autorizado de sincronizar inventario.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        row_data = request.get_json()
+        config.logger.info(f"🔄 Recibida actualización de inventario: {row_data}")
+
+        # TODO: Implementar lógica de escritura en Firestore / Embeddings
+        # Por ahora solo logueamos la recepción exitosa.
+
+        return jsonify({"status": "received", "data": row_data}), 200
+    except Exception as e:
+        config.logger.error(f"Error procesando sync-inventory: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def _process_message_logic(msg, phone):
+    """Lógica central de procesamiento (extraída para ser usada por el Worker)."""
+    try:
+        message_id = msg.get('id')
+
+        # Extracción de texto y Multimedia
+        text = ""
+        image_data = None
+        audio_data = None
+
+        if msg['type'] == 'text':
+            text = msg['text']['body']
+        elif msg['type'] == 'interactive':
+            text = msg['interactive']['button_reply']['title']
+        elif msg['type'] == 'image':
+            text = msg['image'].get('caption', "")
+            media_id = msg['image']['id']
+            media_url = get_media_url(media_id)
+            if media_url:
+                image_data = download_media(media_url)
+        elif msg['type'] == 'audio':
+            media_id = msg['audio']['id']
+            media_url = get_media_url(media_id)
+            if media_url:
+                audio_data = download_media(media_url)
+            if not audio_data:
+                text = "[Audio no descargado]"
+        else:
+            text = "[Multimedia no soportado]"
+
+        # Security check
+        if text and len(text) > 1000:
+            text = text[:1000] + "..."
+
+        # Reset manual
+        if text and "reset" in text.lower():
+            brain._manage_history(phone, clear=True)
+            send_whatsapp(phone, "♻️ Memoria reiniciada.")
+            return
+
+        # --- LLAMADA AL CEREBRO ---
+        response = brain.process_message(text, phone, message_id, image_data=image_data, audio_data=audio_data)
+
+        if response:
+            if isinstance(response, bytes):
+                media_id = upload_media_to_whatsapp(response, "audio/mpeg")
+                if media_id:
+                    send_whatsapp_audio(phone, media_id)
+                else:
+                    send_whatsapp(phone, "Tuve un problema generando mi respuesta de voz. 🎤")
+            else:
+                send_whatsapp(phone, response)
+        else:
+            config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
+
+    except Exception as e:
+        config.logger.error(f"Error procesando lógica de mensaje: {e}", exc_info=True)
+
+# Compatibility for functions-framework
+# When targeting 'app', this is not needed if the server runs 'app' directly.
+# However, if using functions-framework with a specific target name, we might need these.
+# But we are switching to targeting 'app'.
