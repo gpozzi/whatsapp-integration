@@ -8,6 +8,7 @@ import gunicorn # Ensure imports are present as requested
 from google.cloud import pubsub_v1
 import config
 import brain
+import ingestor
 
 # --- FLASK APP INITIALIZATION ---
 app = Flask(__name__)
@@ -129,6 +130,10 @@ def whatsapp_webhook():
     """
     Entrada Híbrida: Maneja verificación, mensajes de WhatsApp y mensajes de Pub/Sub.
     """
+    # 0. Enrutamiento para Sincronización (/sync-inventory)
+    if request.path == "/sync-inventory":
+        return ingestor.sync_inventory(request)
+
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
         if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:

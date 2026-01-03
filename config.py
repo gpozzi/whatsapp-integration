@@ -20,6 +20,10 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 INVENTORY_REFRESH_TIME_MINUTES = int(os.environ.get("INVENTORY_REFRESH_TIME_MINUTES", 60))
 SYNC_API_KEY = os.environ.get("SYNC_API_KEY", "changeme_secret_key")
 
+# --- SECURITY ---
+# Clave para /sync-inventory
+SYNC_API_KEY = os.environ.get("SYNC_API_KEY")
+
 # --- AUDIO & VOICE SETTINGS ---
 # Voces Estándar de Google Cloud TTS (Neural2 para mejor calidad)
 TTS_VOICE_MALE = "es-US-Neural2-B"
