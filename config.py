@@ -18,10 +18,6 @@ LOCATION = os.environ.get("LOCATION", "us-central1")
 DATABASE_NAME = os.environ.get("DATABASE_NAME", "(default)")
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 INVENTORY_REFRESH_TIME_MINUTES = int(os.environ.get("INVENTORY_REFRESH_TIME_MINUTES", 60))
-SYNC_API_KEY = os.environ.get("SYNC_API_KEY", "changeme_secret_key")
-
-# --- SECURITY ---
-# Clave para /sync-inventory
 SYNC_API_KEY = os.environ.get("SYNC_API_KEY")
 
 # --- AUDIO & VOICE SETTINGS ---

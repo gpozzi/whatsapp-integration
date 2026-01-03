@@ -1,4 +1,4 @@
-import functions_framework
+from flask import Flask, request, jsonify
 import requests
 import time
 import json
@@ -11,6 +11,9 @@ import brain
 import ingestor
 
 # --- FLASK APP INITIALIZATION ---
+app = Flask(__name__)
+
+# Initialize Flask app
 app = Flask(__name__)
 
 # Publisher Client (Global to reuse connection)
@@ -123,6 +126,68 @@ def send_whatsapp_audio(phone, media_id):
         config.logger.error(f"Error enviando Audio WhatsApp: {e}")
 
 
+def _process_message_logic(msg, phone):
+    """Lógica central de procesamiento (extraída para ser usada por el Worker)."""
+    try:
+        message_id = msg.get('id')
+
+        # Extracción de texto y Multimedia
+        text = ""
+        image_data = None
+        audio_data = None
+
+        if msg['type'] == 'text':
+            text = msg['text']['body']
+        elif msg['type'] == 'interactive':
+            text = msg['interactive']['button_reply']['title']
+        elif msg['type'] == 'image':
+            text = msg['image'].get('caption', "")
+            media_id = msg['image']['id']
+            media_url = get_media_url(media_id)
+            if media_url:
+                image_data = download_media(media_url)
+        elif msg['type'] == 'audio':
+            media_id = msg['audio']['id']
+            media_url = get_media_url(media_id)
+            if media_url:
+                audio_data = download_media(media_url)
+            if not audio_data:
+                text = "[Audio no descargado]"
+        else:
+            text = "[Multimedia no soportado]"
+
+        # Security check
+        if text and len(text) > 1000:
+            text = text[:1000] + "..."
+
+        # Reset manual
+        if text and "reset" in text.lower():
+            brain._manage_history(phone, clear=True)
+            send_whatsapp(phone, "♻️ Memoria reiniciada.")
+            return
+
+        # --- LLAMADA AL CEREBRO ---
+        response = brain.process_message(text, phone, message_id, image_data=image_data, audio_data=audio_data)
+
+        if response:
+            if isinstance(response, bytes):
+                media_id = upload_media_to_whatsapp(response, "audio/mpeg")
+                if media_id:
+                    send_whatsapp_audio(phone, media_id)
+                else:
+                    send_whatsapp(phone, "Tuve un problema generando mi respuesta de voz. 🎤")
+            else:
+                send_whatsapp(phone, response)
+        else:
+            config.logger.info(f"Mensaje duplicado o ignorado: {message_id}")
+
+    except Exception as e:
+        config.logger.error(f"Error procesando lógica de mensaje: {e}", exc_info=True)
+
+
+# --- WEBHOOK ROUTES ---
+
+@app.route('/webhook', methods=['GET', 'POST'])
 # --- ROUTE HANDLERS ---
 
 @app.route("/", methods=["GET", "POST"])
@@ -220,8 +285,28 @@ def whatsapp_webhook():
             config.logger.error(f"Error en Webhook: {e}", exc_info=True)
             return "Error", 500
 
+@app.route('/sync-inventory', methods=['POST'])
+def sync_inventory():
+    """
+    Ruta para recibir actualizaciones desde Google Sheets.
+    Requiere Header: Authorization: <SYNC_API_KEY>
+    """
+    try:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or auth_header != config.SYNC_API_KEY:
+            config.logger.warning("Intento de acceso no autorizado a /sync-inventory")
+            return jsonify({"error": "Unauthorized"}), 401
 
-@app.route("/worker", methods=["POST"])
+        success = brain.reload_inventory()
+        if success:
+            return jsonify({"status": "success", "message": "Inventory reloaded"}), 200
+        else:
+            return jsonify({"status": "error", "message": "Failed to reload inventory"}), 500
+    except Exception as e:
+        config.logger.error(f"Error en sync-inventory: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/worker', methods=['POST'])
 def whatsapp_worker():
     """
     Proceso Asíncrono: Recibe el Push de Pub/Sub y procesa el mensaje con Gemini.
@@ -259,6 +344,8 @@ def whatsapp_worker():
         config.logger.error(f"Error en Worker: {e}", exc_info=True)
         return "Internal Server Error", 500
 
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
 
 @app.route("/sync-inventory", methods=["POST"])
 def sync_inventory():

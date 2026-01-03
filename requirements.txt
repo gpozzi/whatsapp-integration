@@ -1,4 +1,3 @@
-functions-framework
 google-cloud-firestore
 google-auth
 google-api-python-client
