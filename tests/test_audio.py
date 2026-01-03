@@ -11,8 +11,6 @@ mock_vertexai = MagicMock()
 mock_pandas = MagicMock()
 mock_google_auth = MagicMock()
 mock_discovery = MagicMock()
-mock_langchain_core = MagicMock()
-mock_langchain_experimental = MagicMock()
 
 sys.modules["google"] = MagicMock()
 sys.modules["google.cloud"] = MagicMock()
@@ -21,7 +19,6 @@ sys.modules["google.cloud.texttospeech"] = mock_texttospeech
 sys.modules["langchain_google_vertexai"] = mock_vertexai
 sys.modules["google.auth"] = mock_google_auth
 sys.modules["googleapiclient.discovery"] = mock_discovery
-sys.modules["langchain_experimental.agents"] = mock_langchain_experimental
 
 import brain
 import config
@@ -31,14 +28,9 @@ class TestAudioFeatures(unittest.TestCase):
     def setUp(self):
         brain._db_client = MagicMock()
         brain._safety_model = MagicMock()
-        # brain._sales_agent is removed, so we don't mock it here
-        brain._df_inventory = MagicMock()
-        brain._inventory_timestamp = brain.datetime.datetime.now(brain.datetime.timezone.utc)
 
         # Re-bind brain imports to current mocks (fix for discover stale mocks)
-        brain.create_pandas_dataframe_agent = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
         brain.ChatVertexAI = sys.modules["langchain_google_vertexai"].ChatVertexAI
-        brain.build = sys.modules["googleapiclient.discovery"].build
         brain.HumanMessage = sys.modules["langchain_core.messages"].HumanMessage
 
         # Mock config values using patch to avoid polluting global state
@@ -52,7 +44,8 @@ class TestAudioFeatures(unittest.TestCase):
 
         brain.texttospeech.VoiceSelectionParams.side_effect = voice_params_side_effect
 
-    def test_analyze_audio_male(self):
+    @patch('brain.HumanMessage')
+    def test_analyze_audio_male(self, mock_human_message):
         # Setup mock return from Gemini
         mock_response_content = '```json\n{"text": "Hola busco un auto", "gender": "MALE"}\n```'
         # Important: brain._safety_model is a mock, invoke returns a mock which has a content attribute.
@@ -64,7 +57,7 @@ class TestAudioFeatures(unittest.TestCase):
         # Verify calls
         # Check that HumanMessage was initialized with correct content
         # Because HumanMessage is a Mock class, we check its constructor call args
-        call_args = brain.HumanMessage.call_args
+        call_args = mock_human_message.call_args
         self.assertIsNotNone(call_args, "HumanMessage should have been instantiated")
 
         kwargs = call_args[1]
@@ -117,26 +110,30 @@ class TestAudioFeatures(unittest.TestCase):
         _, kwargs = mock_client_instance.synthesize_speech.call_args
         self.assertEqual(kwargs['voice'].name, "female-voice")
 
-    @patch('brain._get_sales_agent')
-    def test_process_message_audio_flow(self, mock_get_agent):
-        # We need to ensure that the mocked functions in `process_message` actually return what we expect.
-        # Since we cannot easily patch internal calls when functions are in the same module without some effort,
-        # let's mock the return values of the helper functions by replacing them temporarily in the module.
-
+    @patch('brain.HumanMessage')
+    @patch('brain.ChatVertexAI') # Patch LLM constructor
+    def test_process_message_audio_flow(self, mock_llm_constructor, mock_human_message):
+        # Setup
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent
         original_audit = brain._audit_response
+        original_search = brain._search_cars
+        original_init = brain._init_services
 
         try:
             brain._analyze_audio = MagicMock(return_value={"text": "Quiero un Toyota", "gender": "MALE"})
             brain._text_to_speech = MagicMock(return_value=b"audio_response_bytes")
             brain._analyze_tone_and_intent = MagicMock(return_value={"intent": "SALES_QUERY", "style_instruction": "Normal"})
             brain._audit_response = MagicMock(return_value=True)
+            brain._search_cars = MagicMock(return_value="Inventory Info")
 
-            mock_agent = MagicMock()
-            mock_agent.invoke.return_value = {'output': 'Tenemos un Toyota Corolla.'}
-            mock_get_agent.return_value = mock_agent
+            mock_llm_instance = MagicMock()
+            mock_llm_instance.invoke.return_value.content = 'Tenemos un Toyota Corolla.'
+            mock_llm_constructor.return_value = mock_llm_instance
+
+            # Mock brain._init_services to return mock_llm_instance
+            brain._init_services = MagicMock(return_value=mock_llm_instance)
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
@@ -158,25 +155,29 @@ class TestAudioFeatures(unittest.TestCase):
             brain._text_to_speech = original_tts
             brain._analyze_tone_and_intent = original_tone
             brain._audit_response = original_audit
+            brain._search_cars = original_search
+            brain._init_services = original_init
 
-    @patch('brain._get_sales_agent')
-    def test_process_message_text_fallback(self, mock_get_agent):
+    @patch('brain.HumanMessage')
+    @patch('brain.ChatVertexAI')
+    def test_process_message_text_fallback(self, mock_llm_constructor, mock_human_message):
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent
+        original_search = brain._search_cars
+        original_init = brain._init_services
 
         try:
             brain._analyze_audio = MagicMock(return_value={"text": "Hola", "gender": "FEMALE"})
             brain._text_to_speech = MagicMock(return_value=None)
             brain._analyze_tone_and_intent = MagicMock(return_value={"intent": "SALES_QUERY", "style_instruction": "Normal"})
+            brain._search_cars = MagicMock(return_value="Inventory Info")
 
-            mock_agent = MagicMock()
-            mock_agent.invoke.return_value = {'output': 'Respuesta texto fallback.'}
-            mock_get_agent.return_value = mock_agent
+            mock_llm_instance = MagicMock()
+            mock_llm_instance.invoke.return_value.content = 'Respuesta texto fallback.'
+            mock_llm_constructor.return_value = mock_llm_instance
 
-            # Fallback configuration if patch fails (Mock the underlying call)
-            mock_create = sys.modules["langchain_experimental.agents"].create_pandas_dataframe_agent
-            mock_create.return_value = mock_agent
+            brain._init_services = MagicMock(return_value=mock_llm_instance)
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
@@ -194,6 +195,8 @@ class TestAudioFeatures(unittest.TestCase):
             brain._analyze_audio = original_analyze
             brain._text_to_speech = original_tts
             brain._analyze_tone_and_intent = original_tone
+            brain._search_cars = original_search
+            brain._init_services = original_init
 
     def tearDown(self):
         self.config_patcher.stop()

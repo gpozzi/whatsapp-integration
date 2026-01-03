@@ -70,57 +70,5 @@ class TestSecurity(unittest.TestCase):
         self.assertIn('timeout', kwargs)
         self.assertEqual(kwargs['timeout'], 10)
 
-    def test_prompt_security_constraints(self):
-        """Verify that SALES_AGENT_PREFIX contains critical security instructions."""
-        prefix = main.config.SALES_AGENT_PREFIX
-
-        # Check for key security restrictions
-        self.assertIn("SEGURIDAD Y RESTRICCIONES", prefix)
-        self.assertIn("NO tienes permiso para importar", prefix)
-        self.assertIn("'os'", prefix)
-        self.assertIn("'sys'", prefix)
-        self.assertIn("SOLO puedes usar 'pandas', 'numpy'", prefix)
-        self.assertIn("NUNCA intentes leer variables de entorno", prefix)
-
-    def test_validate_python_code_blocks_requests(self):
-        """Verify that validate_python_code raises SecurityError for requests import."""
-        code = "import requests"
-        with self.assertRaises(security.SecurityError):
-            security.validate_python_code(code)
-
-    def test_validate_python_code_blocks_dangerous_imports(self):
-        """Verify that validate_python_code raises SecurityError for dangerous imports."""
-        dangerous_codes = [
-            "import os",
-            "import sys",
-            "import subprocess",
-            "from os import path",
-            "import shutil",
-            "__import__('os')",
-            "print(__builtins__)"
-        ]
-
-        for code in dangerous_codes:
-            with self.subTest(code=code):
-                with self.assertRaises(security.SecurityError):
-                    security.validate_python_code(code)
-
-    def test_validate_python_code_allows_safe_code(self):
-        """Verify that validate_python_code allows safe pandas operations."""
-        safe_codes = [
-            "import pandas as pd",
-            "df.head()",
-            "df[df['price'] > 1000]",
-            "import numpy as np",
-            "print('Hello world')"
-        ]
-
-        for code in safe_codes:
-            with self.subTest(code=code):
-                try:
-                    security.validate_python_code(code)
-                except security.SecurityError:
-                    self.fail(f"Safe code was blocked: {code}")
-
 if __name__ == '__main__':
     unittest.main()

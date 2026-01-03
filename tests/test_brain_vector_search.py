@@ -1,16 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch, ANY
 import sys
-
-# Mock libraries to avoid installation
-sys.modules['google.cloud'] = MagicMock()
-sys.modules['google.cloud.firestore'] = MagicMock()
-sys.modules['google.cloud.texttospeech'] = MagicMock()
-sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['langchain_core'] = MagicMock()
-sys.modules['langchain_core.messages'] = MagicMock()
-
-# Re-import brain after mocking
 import brain
 import config
 
@@ -27,6 +17,7 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.mock_embeddings_service = MagicMock()
 
         # Patch classes in brain
+        # Since brain.py imports 'firestore' from 'google.cloud', brain.firestore IS google.cloud.firestore.
         self.patcher_firestore = patch('brain.firestore.Client', return_value=self.mock_firestore_client)
         self.patcher_chat_vertex_ai = patch('brain.ChatVertexAI')
         self.patcher_vertex_embeddings = patch('brain.VertexAIEmbeddings', return_value=self.mock_embeddings_service)
@@ -80,7 +71,6 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.mock_safety_model.invoke.return_value.content = "CATEGORY: SALES_QUERY | TONE: CASUAL"
 
         # Mock Vector Search (via _search_cars internal call or mocking _search_cars directly)
-        # We'll mock _search_cars to simplify
         with patch('brain._search_cars', return_value="[Inventory Context: Toyota Corolla Available]") as mock_search:
             # Mock Sales LLM response
             self.mock_sales_llm.invoke.return_value.content = "Tenemos un Toyota Corolla disponible."
