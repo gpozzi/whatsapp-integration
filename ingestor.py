@@ -18,7 +18,14 @@ def sync_inventory(request):
     Recibe JSON, genera embeddings y guarda en Firestore Vector Search.
     """
     # 1. Seguridad: Verificar API Key
-    api_key = request.headers.get("X-API-KEY")
+    # Permitir tanto X-API-KEY (existente) como Authorization (documentado en main.py)
+    api_key = request.headers.get("X-API-KEY") or request.headers.get("Authorization")
+
+    # Check if config key is set to prevent bypass if env var is missing/None
+    if not config.SYNC_API_KEY:
+        config.logger.critical("⛔ SYNC_API_KEY no configurada en el servidor.")
+        return "Server Configuration Error", 500
+
     if not api_key or api_key != config.SYNC_API_KEY:
         config.logger.warning("⛔ Intento de acceso no autorizado a /sync-inventory")
         return "Unauthorized", 401
