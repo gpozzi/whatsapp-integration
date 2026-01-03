@@ -33,14 +33,16 @@ class TestAudioResponses(unittest.TestCase):
     def test_config_values(self):
         self.assertEqual(config.TTS_VOICE_FEMALE, "es-US-Neural2-C", "Female voice should be Neural2-C")
 
-    @patch('brain._get_sales_agent')
-    def test_audio_input_female_response(self, mock_get_agent):
+    @patch('brain.ChatVertexAI')
+    def test_audio_input_female_response(self, mock_llm_constructor):
         """Test that if the user is FEMALE, the bot responds with AUDIO (bytes)."""
 
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent
         original_audit = brain._audit_response
+        original_search = brain._search_cars
+        original_init = brain._init_services
 
         try:
             # 1. Simulate Audio Input + Gender Detection = FEMALE
@@ -52,10 +54,13 @@ class TestAudioResponses(unittest.TestCase):
             # 3. Normal flow mocks
             brain._analyze_tone_and_intent = MagicMock(return_value={"intent": "SALES_QUERY", "style_instruction": "Normal"})
             brain._audit_response = MagicMock(return_value=True)
+            brain._search_cars = MagicMock(return_value="Inventory Info")
 
-            mock_agent = MagicMock()
-            mock_agent.invoke.return_value = {'output': 'Respuesta texto.'}
-            mock_get_agent.return_value = mock_agent
+            mock_llm_instance = MagicMock()
+            mock_llm_instance.invoke.return_value.content = 'Respuesta texto.'
+            mock_llm_constructor.return_value = mock_llm_instance
+
+            brain._init_services = MagicMock(return_value=mock_llm_instance)
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
@@ -80,15 +85,19 @@ class TestAudioResponses(unittest.TestCase):
             brain._text_to_speech = original_tts
             brain._analyze_tone_and_intent = original_tone
             brain._audit_response = original_audit
+            brain._search_cars = original_search
+            brain._init_services = original_init
 
-    @patch('brain._get_sales_agent')
-    def test_audio_input_male_response(self, mock_get_agent):
+    @patch('brain.ChatVertexAI')
+    def test_audio_input_male_response(self, mock_llm_constructor):
         """Test that if the user is MALE, the bot responds with AUDIO (bytes)."""
 
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent
         original_audit = brain._audit_response
+        original_search = brain._search_cars
+        original_init = brain._init_services
 
         try:
             # 1. Simulate Audio Input + Gender Detection = MALE
@@ -100,10 +109,13 @@ class TestAudioResponses(unittest.TestCase):
             # 3. Normal flow mocks
             brain._analyze_tone_and_intent = MagicMock(return_value={"intent": "SALES_QUERY", "style_instruction": "Normal"})
             brain._audit_response = MagicMock(return_value=True)
+            brain._search_cars = MagicMock(return_value="Inventory Info")
 
-            mock_agent = MagicMock()
-            mock_agent.invoke.return_value = {'output': 'Respuesta texto.'}
-            mock_get_agent.return_value = mock_agent
+            mock_llm_instance = MagicMock()
+            mock_llm_instance.invoke.return_value.content = 'Respuesta texto.'
+            mock_llm_constructor.return_value = mock_llm_instance
+
+            brain._init_services = MagicMock(return_value=mock_llm_instance)
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
@@ -128,6 +140,8 @@ class TestAudioResponses(unittest.TestCase):
             brain._text_to_speech = original_tts
             brain._analyze_tone_and_intent = original_tone
             brain._audit_response = original_audit
+            brain._search_cars = original_search
+            brain._init_services = original_init
 
 if __name__ == '__main__':
     unittest.main()

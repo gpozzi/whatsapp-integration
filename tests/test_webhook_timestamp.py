@@ -35,7 +35,6 @@ sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
 
 # Mock heavy deps
 sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['langchain_experimental.agents'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
 sys.modules['googleapiclient'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()

@@ -11,7 +11,6 @@ sys.modules['googleapiclient.discovery'] = MagicMock()
 sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['langchain_experimental.agents'] = MagicMock()
 sys.modules['google.cloud.texttospeech'] = MagicMock()
 
 # Add root to path
