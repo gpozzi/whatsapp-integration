@@ -3,9 +3,14 @@ import requests
 import time
 import json
 import base64
+from flask import Flask, request, jsonify
+import gunicorn # Ensure imports are present as requested
 from google.cloud import pubsub_v1
 import config
 import brain
+
+# --- FLASK APP INITIALIZATION ---
+app = Flask(__name__)
 
 # Publisher Client (Global to reuse connection)
 try:
@@ -117,10 +122,10 @@ def send_whatsapp_audio(phone, media_id):
         config.logger.error(f"Error enviando Audio WhatsApp: {e}")
 
 
-# --- WEBHOOK (Publisher) ---
+# --- ROUTE HANDLERS ---
 
-@functions_framework.http
-def whatsapp_webhook(request):
+@app.route("/", methods=["GET", "POST"])
+def whatsapp_webhook():
     """
     Entrada Híbrida: Maneja verificación, mensajes de WhatsApp y mensajes de Pub/Sub.
     """
@@ -211,16 +216,11 @@ def whatsapp_webhook(request):
             return "Error", 500
 
 
-# --- WORKER (Subscriber) ---
-
-@functions_framework.http
-def whatsapp_worker(request):
+@app.route("/worker", methods=["POST"])
+def whatsapp_worker():
     """
     Proceso Asíncrono: Recibe el Push de Pub/Sub y procesa el mensaje con Gemini.
     """
-    if request.method != "POST":
-        return "Method Not Allowed", 405
-
     try:
         envelope = request.get_json()
         if not envelope:
@@ -253,6 +253,29 @@ def whatsapp_worker(request):
     except Exception as e:
         config.logger.error(f"Error en Worker: {e}", exc_info=True)
         return "Internal Server Error", 500
+
+
+@app.route("/sync-inventory", methods=["POST"])
+def sync_inventory():
+    """
+    Endpoint para recibir actualizaciones de inventario desde Google Sheets.
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {config.SYNC_API_KEY}":
+        config.logger.warning("Intento no autorizado de sincronizar inventario.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    try:
+        row_data = request.get_json()
+        config.logger.info(f"🔄 Recibida actualización de inventario: {row_data}")
+
+        # TODO: Implementar lógica de escritura en Firestore / Embeddings
+        # Por ahora solo logueamos la recepción exitosa.
+
+        return jsonify({"status": "received", "data": row_data}), 200
+    except Exception as e:
+        config.logger.error(f"Error procesando sync-inventory: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 
 def _process_message_logic(msg, phone):
@@ -312,3 +335,8 @@ def _process_message_logic(msg, phone):
 
     except Exception as e:
         config.logger.error(f"Error procesando lógica de mensaje: {e}", exc_info=True)
+
+# Compatibility for functions-framework
+# When targeting 'app', this is not needed if the server runs 'app' directly.
+# However, if using functions-framework with a specific target name, we might need these.
+# But we are switching to targeting 'app'.

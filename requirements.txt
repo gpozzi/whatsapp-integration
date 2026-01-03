@@ -12,3 +12,4 @@ langsmith
 gunicorn
 google-cloud-texttospeech
 google-cloud-pubsub
+flask
