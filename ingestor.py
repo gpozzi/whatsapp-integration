@@ -1,5 +1,6 @@
 import json
 import logging
+import secrets
 import config
 from google.cloud import firestore
 # Conditional import to allow tests to run without the actual package installed if needed,
@@ -19,7 +20,7 @@ def sync_inventory(request):
     """
     # 1. Seguridad: Verificar API Key
     api_key = request.headers.get("X-API-KEY")
-    if not api_key or api_key != config.SYNC_API_KEY:
+    if not api_key or not config.SYNC_API_KEY or not secrets.compare_digest(api_key, config.SYNC_API_KEY):
         config.logger.warning("⛔ Intento de acceso no autorizado a /sync-inventory")
         return "Unauthorized", 401
 
