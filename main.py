@@ -3,6 +3,7 @@ import requests
 import time
 import json
 import base64
+import urllib.parse
 import gunicorn
 from google.cloud import pubsub_v1
 import config
@@ -72,8 +73,28 @@ def get_media_url(media_id):
         return None
 
 def download_media(media_url):
-    """Descarga el contenido binario del archivo multimedia."""
+    """Descarga el contenido binario del archivo multimedia con validación de seguridad."""
     try:
+        # Security: Validate URL to prevent SSRF
+        parsed = urllib.parse.urlparse(media_url)
+        if parsed.scheme != "https":
+            config.logger.error(f"Security: Non-HTTPS media URL blocked: {media_url}")
+            return None
+
+        allowed_domains = [
+            "graph.facebook.com",
+            "lookaside.fbsbx.com",
+            "cdn.fbsbx.com",
+            "www.facebook.com",
+            "whatsapp.net",
+            "mmg.whatsapp.net"
+        ]
+
+        # Check if domain is exactly the allowed domain or a subdomain (e.g., .facebook.com)
+        if not any(parsed.netloc == d or parsed.netloc.endswith("." + d) for d in allowed_domains):
+             config.logger.error(f"Security: Untrusted media domain blocked: {parsed.netloc}")
+             return None
+
         headers = {
             "Authorization": f"Bearer {config.WHATSAPP_TOKEN}"
         }
