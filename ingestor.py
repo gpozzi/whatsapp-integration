@@ -20,8 +20,10 @@ def sync_inventory(request):
     """
     # 1. Seguridad: Verificar API Key
     api_key = request.headers.get("X-API-KEY")
-    # Security fix: Use constant-time comparison to prevent timing attacks
-    if not api_key or not config.SYNC_API_KEY or not secrets.compare_digest(api_key, config.SYNC_API_KEY):
+    server_key = config.SYNC_API_KEY
+
+    # Use secure constant-time comparison
+    if not api_key or not server_key or not secrets.compare_digest(api_key, server_key):
         config.logger.warning("⛔ Intento de acceso no autorizado a /sync-inventory")
         return "Unauthorized", 401
 
