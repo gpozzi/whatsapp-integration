@@ -1,5 +1,6 @@
 import json
 import logging
+import secrets
 import config
 from google.cloud import firestore
 # Conditional import to allow tests to run without the actual package installed if needed,
@@ -18,15 +19,11 @@ def sync_inventory(request):
     Recibe JSON, genera embeddings y guarda en Firestore Vector Search.
     """
     # 1. Seguridad: Verificar API Key
-    # Permitir tanto X-API-KEY (existente) como Authorization (documentado en main.py)
-    api_key = request.headers.get("X-API-KEY") or request.headers.get("Authorization")
+    api_key = request.headers.get("X-API-KEY")
+    server_key = config.SYNC_API_KEY
 
-    # Check if config key is set to prevent bypass if env var is missing/None
-    if not config.SYNC_API_KEY:
-        config.logger.critical("⛔ SYNC_API_KEY no configurada en el servidor.")
-        return "Server Configuration Error", 500
-
-    if not api_key or api_key != config.SYNC_API_KEY:
+    # Use secure constant-time comparison
+    if not api_key or not server_key or not secrets.compare_digest(api_key, server_key):
         config.logger.warning("⛔ Intento de acceso no autorizado a /sync-inventory")
         return "Unauthorized", 401
 
