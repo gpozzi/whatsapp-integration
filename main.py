@@ -262,8 +262,12 @@ def whatsapp_webhook():
                     data_bytes = data_str.encode("utf-8")
 
                     future = publisher.publish(config.PUBSUB_TOPIC, data_bytes)
-                    future.result()
-                    config.logger.info(f"📤 Mensaje enviado a Pub/Sub: {message_id}")
+                    # Optimization: Async publish to avoid blocking webhook response
+                    # future.result() removed to prevent waiting for ACK
+                    future.add_done_callback(
+                        lambda f: config.logger.info(f"📤 Mensaje enviado a Pub/Sub: {message_id}")
+                        if not f.exception() else config.logger.error(f"❌ Error Pub/Sub: {f.exception()}")
+                    )
                 else:
                     # Fallback si no hay Pub/Sub
                     _process_message_logic(msg, phone)
