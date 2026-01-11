@@ -17,6 +17,7 @@ import config
 # --- ESTADO GLOBAL ---
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
+_embeddings_service: Optional[VertexAIEmbeddings] = None
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -30,9 +31,9 @@ BAD_WORDS = ["Error", "Processing", "Agent stopped"]
 def _init_services() -> ChatVertexAI:
     """Inicializa los servicios de Google Cloud y los modelos de IA.
 
-    Inicializa el cliente de Firestore, el LLM de Ventas (Gemini 2.5 Flash) y
-    el Juez de Seguridad (Gemini 2.5 Flash Lite). Fuerza la ejecución en
-    'us-central1' con temperatura 0.0 para garantizar consistencia.
+    Inicializa el cliente de Firestore, el LLM de Ventas (Gemini 2.5 Flash),
+    el Juez de Seguridad (Gemini 2.5 Flash Lite) y el servicio de Embeddings.
+    Fuerza la ejecución en 'us-central1' con temperatura 0.0 para garantizar consistencia.
 
     Returns:
         ChatVertexAI: La instancia inicializada del LLM principal de Ventas.
@@ -40,8 +41,8 @@ def _init_services() -> ChatVertexAI:
     Raises:
         Exception: Si falla la inicialización de algún servicio.
     """
-    global _db_client, _safety_model
-    if _db_client and _safety_model:
+    global _db_client, _safety_model, _embeddings_service
+    if _db_client and _safety_model and _embeddings_service:
         # Si ya están inicializados, retornamos una nueva instancia del modelo de ventas
         # para asegurar frescura o reutilizar si se prefiere.
         # En este diseño, retornamos una nueva instancia para el agente principal.
@@ -69,6 +70,13 @@ def _init_services() -> ChatVertexAI:
             project=config.PROJECT_ID,
             location=MODEL_LOCATION,
             temperature=MODEL_TEMP,
+        )
+
+        # Servicio de Embeddings (Optimización: Instancia única)
+        _embeddings_service = VertexAIEmbeddings(
+            model_name="text-embedding-004",
+            project=config.PROJECT_ID,
+            location=MODEL_LOCATION
         )
 
         _db_client = firestore.Client(project=config.PROJECT_ID, database=config.DATABASE_NAME)
@@ -433,18 +441,13 @@ def _search_cars(query: str) -> str:
         str: Texto con los resultados relevantes del inventario.
     """
     try:
-        if not _db_client:
+        if not _db_client or not _embeddings_service:
             return "No se pudo conectar a la base de datos."
 
         config.logger.info(f"🔎 Buscando autos para: {query}")
 
         # 1. Generar Embedding de la consulta
-        embeddings_service = VertexAIEmbeddings(
-            model_name="text-embedding-004",
-            project=config.PROJECT_ID,
-            location=MODEL_LOCATION
-        )
-        query_vector = embeddings_service.embed_query(query)
+        query_vector = _embeddings_service.embed_query(query)
 
         # 2. Búsqueda Vectorial en Firestore
         # Se asume que la colección 'inventory_vectors' tiene un índice vectorial en 'embedding_field'
