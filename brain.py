@@ -2,10 +2,16 @@ import datetime
 import logging
 import json
 from typing import Optional, List, Union
+from concurrent.futures import ThreadPoolExecutor
 
 import google.auth
 from google.cloud import firestore
-from google.cloud.firestore import Vector
+try:
+    from google.cloud.firestore import Vector
+except ImportError:
+    # Fallback for environments where Vector is not available or older library versions
+    Vector = lambda x: x
+
 from google.cloud import texttospeech
 import base64
 
@@ -192,10 +198,9 @@ def _manage_history(phone: str, user_text: Optional[str] = None, bot_text: Optio
         history_list.append(f"Usuario: {user_text}")
         if bot_text:
             history_list.append(f"Bot: {bot_text}")
-            # Si el bot respondió, intentamos actualizar el perfil (asíncrono idealmente, aquí síncrono)
-            # Para no sobrecargar, lo hacemos de forma simple o al final del turno.
-            # En esta arquitectura simple, lo llamamos aquí.
-            _update_user_profile(phone, "\n".join(history_list[-4:])) # Solo analizamos lo último
+            # Si el bot respondió, actualizamos el perfil ASÍNCRONAMENTE para no bloquear la respuesta.
+            # ⚡ Performance: Movemos esta tarea lenta (~1-2s) a un hilo de fondo.
+            _executor.submit(_update_user_profile, phone, "\n".join(history_list[-4:]))
         
         # Mantener un límite de almacenamiento razonable (ej. últimos 20 mensajes) para ahorrar espacio/costo,
         # mientras la lógica de ventana de contexto abajo maneja el límite "inteligente" de tokens.
@@ -443,6 +448,18 @@ def _search_cars(query: str) -> str:
     try:
         if not _db_client or not _embeddings_service:
             return "No se pudo conectar a la base de datos."
+
+        # ⚡ Performance: Reutilizamos el cliente de Embeddings global
+        if not _embeddings_service:
+            # Fallback por si no se inicializó en _init_services (casos raros)
+             config.logger.warning("Embeddings service no inicializado, creando uno on-the-fly.")
+             embeddings_service = VertexAIEmbeddings(
+                model_name="text-embedding-004",
+                project=config.PROJECT_ID,
+                location=MODEL_LOCATION
+            )
+        else:
+            embeddings_service = _embeddings_service
 
         config.logger.info(f"🔎 Buscando autos para: {query}")
 
