@@ -24,8 +24,6 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
-# Executor para tareas de fondo (fire-and-forget)
-_executor = ThreadPoolExecutor(max_workers=2)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -80,7 +78,7 @@ def _init_services() -> ChatVertexAI:
             temperature=MODEL_TEMP,
         )
 
-        # Servicio de Embeddings (Reutilizable)
+        # Servicio de Embeddings (Optimización: Instancia única)
         _embeddings_service = VertexAIEmbeddings(
             model_name="text-embedding-004",
             project=config.PROJECT_ID,
@@ -448,7 +446,7 @@ def _search_cars(query: str) -> str:
         str: Texto con los resultados relevantes del inventario.
     """
     try:
-        if not _db_client:
+        if not _db_client or not _embeddings_service:
             return "No se pudo conectar a la base de datos."
 
         # ⚡ Performance: Reutilizamos el cliente de Embeddings global
@@ -466,7 +464,7 @@ def _search_cars(query: str) -> str:
         config.logger.info(f"🔎 Buscando autos para: {query}")
 
         # 1. Generar Embedding de la consulta
-        query_vector = embeddings_service.embed_query(query)
+        query_vector = _embeddings_service.embed_query(query)
 
         # 2. Búsqueda Vectorial en Firestore
         # Se asume que la colección 'inventory_vectors' tiene un índice vectorial en 'embedding_field'
