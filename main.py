@@ -211,7 +211,10 @@ def whatsapp_webhook():
     """
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
-        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
+        verify_token = request.args.get("hub.verify_token")
+        # Use constant-time comparison to prevent timing attacks
+        import secrets
+        if verify_token and config.VERIFY_TOKEN and secrets.compare_digest(verify_token, config.VERIFY_TOKEN):
             return request.args.get("hub.challenge"), 200
         return "Forbidden", 403
 
