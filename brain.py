@@ -25,6 +25,9 @@ _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
 
+# ⚡ Performance: Ejecutor global para tareas secundarias asíncronas (ej. actualización de perfil)
+_executor = ThreadPoolExecutor(max_workers=2)
+
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
 MODEL_SAFETY = "gemini-2.5-flash-lite"
