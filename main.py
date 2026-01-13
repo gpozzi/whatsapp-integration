@@ -6,6 +6,7 @@ import base64
 import urllib.parse
 import gunicorn
 from google.cloud import pubsub_v1
+import secrets
 import config
 import brain
 import ingestor
@@ -211,7 +212,11 @@ def whatsapp_webhook():
     """
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
-        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
+        token = request.args.get("hub.verify_token") or ""
+        expected_token = config.VERIFY_TOKEN or ""
+
+        # Security: Use constant-time comparison to prevent timing attacks
+        if secrets.compare_digest(token, expected_token):
             return request.args.get("hub.challenge"), 200
         return "Forbidden", 403
 
