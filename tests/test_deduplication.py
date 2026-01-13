@@ -31,7 +31,8 @@ class TestDeduplication(unittest.TestCase):
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
-    def test_deduplication(self, mock_vector_cls, mock_vertex):
+    @patch('brain._update_user_profile') # Patch out background task
+    def test_deduplication(self, mock_update_profile, mock_vector_cls, mock_vertex):
         """Test that duplicate message IDs are handled correctly."""
 
         # Configure the Firestore Mock we injected in setUp
