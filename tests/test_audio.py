@@ -12,6 +12,12 @@ mock_pandas = MagicMock()
 mock_google_auth = MagicMock()
 mock_discovery = MagicMock()
 
+# Setup mocks for imports in brain.py
+mock_exceptions = MagicMock()
+mock_exceptions.AlreadyExists = Exception
+sys.modules["google.api_core"] = MagicMock()
+sys.modules["google.api_core.exceptions"] = mock_exceptions
+
 sys.modules["google"] = MagicMock()
 sys.modules["google.cloud"] = MagicMock()
 sys.modules["google.cloud.firestore"] = mock_firestore
@@ -137,14 +143,19 @@ class TestAudioFeatures(unittest.TestCase):
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
+            # Mock create for deduplication
+            mock_doc_ref.create.return_value = None
+
             brain._db_client.collection.return_value.document.return_value = mock_doc_ref
 
-            result = brain.process_message(
-                user_text="",
-                phone_number="123",
-                message_id="msg_1",
-                audio_data=b"raw_audio_input"
-            )
+            # Mock executor to prevent issues if it tries to run
+            with patch.object(brain, '_executor', MagicMock()):
+                result = brain.process_message(
+                    user_text="",
+                    phone_number="123",
+                    message_id="msg_1",
+                    audio_data=b"raw_audio_input"
+                )
 
             brain._analyze_audio.assert_called_once_with(b"raw_audio_input")
             brain._text_to_speech.assert_called_once()
@@ -181,13 +192,16 @@ class TestAudioFeatures(unittest.TestCase):
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
+            mock_doc_ref.create.return_value = None
             brain._db_client.collection.return_value.document.return_value = mock_doc_ref
 
-            result = brain.process_message(
-                user_text="",
-                phone_number="123",
-                audio_data=b"audio"
-            )
+            # Mock executor to prevent issues if it tries to run
+            with patch.object(brain, '_executor', MagicMock()):
+                result = brain.process_message(
+                    user_text="",
+                    phone_number="123",
+                    audio_data=b"audio"
+                )
 
             self.assertEqual(result, "Respuesta texto fallback.")
 

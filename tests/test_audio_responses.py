@@ -10,6 +10,12 @@ mock_pandas = MagicMock()
 mock_google_auth = MagicMock()
 mock_discovery = MagicMock()
 
+# Setup mocks for imports in brain.py
+mock_exceptions = MagicMock()
+mock_exceptions.AlreadyExists = Exception
+sys.modules["google.api_core"] = MagicMock()
+sys.modules["google.api_core.exceptions"] = mock_exceptions
+
 sys.modules["google"] = MagicMock()
 sys.modules["google.cloud"] = MagicMock()
 sys.modules["google.cloud.firestore"] = mock_firestore
@@ -64,14 +70,17 @@ class TestAudioResponses(unittest.TestCase):
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
+            mock_doc_ref.create.return_value = None
             brain._db_client.collection.return_value.document.return_value = mock_doc_ref
 
-            result = brain.process_message(
-                user_text="",
-                phone_number="123",
-                message_id="msg_female_audio",
-                audio_data=b"audio_input"
-            )
+            # Mock executor to prevent issues if it tries to run
+            with patch.object(brain, '_executor', MagicMock()):
+                result = brain.process_message(
+                    user_text="",
+                    phone_number="123",
+                    message_id="msg_female_audio",
+                    audio_data=b"audio_input"
+                )
 
             # EXPECT: AUDIO (bytes) because gender is FEMALE and audio_data is present
             self.assertIsInstance(result, bytes, "Expected audio bytes for female user")
@@ -119,14 +128,17 @@ class TestAudioResponses(unittest.TestCase):
 
             mock_doc_ref = MagicMock()
             mock_doc_ref.get.return_value.exists = False
+            mock_doc_ref.create.return_value = None
             brain._db_client.collection.return_value.document.return_value = mock_doc_ref
 
-            result = brain.process_message(
-                user_text="",
-                phone_number="456",
-                message_id="msg_male_audio",
-                audio_data=b"audio_input"
-            )
+            # Mock executor to prevent issues if it tries to run
+            with patch.object(brain, '_executor', MagicMock()):
+                result = brain.process_message(
+                    user_text="",
+                    phone_number="456",
+                    message_id="msg_male_audio",
+                    audio_data=b"audio_input"
+                )
 
             # EXPECT: AUDIO (bytes)
             self.assertIsInstance(result, bytes, "Expected audio bytes for male user")
