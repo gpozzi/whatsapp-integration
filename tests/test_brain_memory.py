@@ -4,8 +4,17 @@ import sys
 import os
 
 # --- MOCK DEPENDENCIES BEFORE IMPORTING BRAIN ---
+# Ideally, we shouldn't mock the root 'google' if it causes issues with submodules.
+# But existing tests rely on it.
+# To allow 'from google.api_core.exceptions import AlreadyExists', we need to mock it properly.
+
+mock_exceptions = MagicMock()
+mock_exceptions.AlreadyExists = Exception # Needs to be a class inheriting from BaseException
+
 sys.modules['google'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
+sys.modules['google.api_core'] = MagicMock()
+sys.modules['google.api_core.exceptions'] = mock_exceptions
 sys.modules['googleapiclient'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()
 sys.modules['google.cloud'] = MagicMock()
@@ -33,9 +42,6 @@ class TestBrainMemory(unittest.TestCase):
         # 2. Old messages (to be cut off by limit)
         # 3. Valid recent messages
 
-        # Let's say limit is 4000 chars.
-        # We create messages to test boundary.
-
         msg_1k = "A" * 1000
 
         messages = [
@@ -57,8 +63,6 @@ class TestBrainMemory(unittest.TestCase):
         # Call _manage_history (read only mode)
         history_str = brain._manage_history("123456789")
 
-        print(f"DEBUG: History length: {len(history_str)}")
-
         # Assertions
         self.assertNotIn("Error processing", history_str, "Should filter technical errors")
         self.assertNotIn("Agent stopped", history_str, "Should filter technical errors")
@@ -70,23 +74,29 @@ class TestBrainMemory(unittest.TestCase):
         self.assertIn("Recent2", history_str, "Should contain recent messages")
         self.assertIn("Recent1", history_str, "Should contain recent messages")
         self.assertIn("Middle2", history_str, "Should contain middle messages")
-
-        # "Oldest" is at index 0.
-        # Valid messages: Middle1 (1000+), Middle2 (1000+), Recent1 (1000+), Recent2 (1000+).
-        # Total valid chars > 4000.
-        # The loop traverses backwards:
-        # 1. Recent2 (adds ~1000) -> total 1000
-        # 2. Recent1 (adds ~1000) -> total 2000
-        # 3. Middle2 (adds ~1000) -> total 3000
-        # 4. Middle1 (adds ~1000) -> total 4000
-        # Next would be Oldest. It should be skipped or break the loop.
-        # Wait, if limit is 4000, adding Middle1 might make it exactly 4000 or slightly over if we check before adding.
-        # Logic: if current_chars + msg_len > LIMIT: break.
-        # So if we are at 3000, and next is 1000, it fits.
-        # If we are at 4000, and next is Oldest (1000), it breaks.
-        # So Middle1 might be included. Oldest definitely not.
-
         self.assertNotIn("Oldest", history_str, "Should truncate old messages")
+
+    def test_manage_history_async_update(self):
+        # Setup mock doc
+        mock_doc_ref = MagicMock()
+        self.mock_db.collection.return_value.document.return_value = mock_doc_ref
+
+        # Mock exists to return False
+        mock_doc_ref.get.return_value.exists = False
+
+        # Mock the executor
+        # Since _executor is instantiated at module level, we can patch it on the brain module
+        with patch.object(brain._executor, 'submit') as mock_submit:
+            # Call with bot_text to trigger update
+            brain._manage_history("123456789", user_text="Hello", bot_text="Hi there")
+
+            # Verify submit was called
+            mock_submit.assert_called_once()
+            args = mock_submit.call_args[0]
+            # args[0] should be the function _update_user_profile
+            self.assertEqual(args[0], brain._update_user_profile)
+            # args[1] should be the phone
+            self.assertEqual(args[1], "123456789")
 
 if __name__ == '__main__':
     unittest.main()

@@ -4,14 +4,20 @@ import sys
 import os
 
 # --- MOCK DEPENDENCIES BEFORE IMPORTING BRAIN ---
+mock_exceptions = MagicMock()
+mock_exceptions.AlreadyExists = Exception # Needs to be a class inheriting from BaseException
+
 sys.modules['google'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
+sys.modules['google.api_core'] = MagicMock()
+sys.modules['google.api_core.exceptions'] = mock_exceptions
 sys.modules['googleapiclient'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()
 sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
+sys.modules['google.cloud.texttospeech'] = MagicMock() # Added this just in case
 
 # Ensure we can import brain
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -60,7 +66,8 @@ class TestDeduplication(unittest.TestCase):
         mock_history_coll.document.return_value = mock_history_doc
 
         # --- Test Case 1: New Message (Not a Duplicate) ---
-        mock_processed_doc.get.return_value.exists = False # Document doesn't exist
+        # With create(), if it succeeds, it returns.
+        mock_processed_doc.create.return_value = None
 
         # Mock LLM instances
         mock_llm_instance = MagicMock()
@@ -88,23 +95,29 @@ class TestDeduplication(unittest.TestCase):
             # Manually set _db_client because we bypassed _init_services
             brain._db_client = mock_db
             brain._safety_model = mock_llm_instance # Reuse for simplicity
-
-            response = brain.process_message("Hello", "123456", "msg_new_123")
+            # Mock executor to prevent issues if it tries to run
+            with patch.object(brain, '_executor', MagicMock()):
+                response = brain.process_message("Hello", "123456", "msg_new_123")
 
         # Verification
         self.assertEqual(response, "Response Text")
-        mock_processed_doc.set.assert_called_once() # Should have saved the ID
+        mock_processed_doc.create.assert_called_once() # Should have called create()
 
         # --- Test Case 2: Duplicate Message ---
         mock_processed_doc.reset_mock()
-        mock_processed_doc.set.reset_mock()
-        mock_processed_doc.get.return_value.exists = True # Document exists
+        mock_processed_doc.create.side_effect = brain.AlreadyExists("Duplicate") # Simulate conflict
 
-        response = brain.process_message("Hello Again", "123456", "msg_existing_123")
+        # We don't need to patch _init_services here because deduplication happens BEFORE init?
+        # No, _init_services happens FIRST in process_message.
+        # But _check_is_duplicate is called after init.
+
+        with patch('brain._init_services', return_value=mock_llm_instance):
+             brain._db_client = mock_db # Ensure db client is set
+             response = brain.process_message("Hello Again", "123456", "msg_existing_123")
 
         # Verification
         self.assertIsNone(response)
-        mock_processed_doc.set.assert_not_called() # Should NOT save again
+        mock_processed_doc.create.assert_called_once() # Should have called create()
 
 if __name__ == '__main__':
     unittest.main()
