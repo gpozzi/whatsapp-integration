@@ -24,6 +24,8 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+# Global thread pool for async operations and parallel execution
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -585,12 +587,21 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             response = sales_llm.invoke(prompt)
             final_text = response.content
 
+            # ⚡ Performance: Parallelize Safety Check and Feedback Decision
+            # Both checks require independent LLM calls (~500ms-1s each).
+            # Running them in parallel saves the latency of the shorter operation.
+            future_audit = _executor.submit(_audit_response, final_text)
+            future_feedback = _executor.submit(_should_ask_feedback, final_text)
+
+            is_safe = future_audit.result()
+            should_feedback = future_feedback.result()
+
             # Auditoría de Seguridad
-            if not _audit_response(final_text):
+            if not is_safe:
                 return "No puedo procesar esa solicitud por motivos de seguridad."
 
             # 6. Decisión de Feedback (Supervisor)
-            if _should_ask_feedback(final_text):
+            if should_feedback:
                 final_text += " (¿Te sirvió esta info? Responde SÍ o NO)"
 
         # Guardar Interacción

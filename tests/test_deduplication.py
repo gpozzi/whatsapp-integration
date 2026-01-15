@@ -62,37 +62,46 @@ class TestDeduplication(unittest.TestCase):
         # --- Test Case 1: New Message (Not a Duplicate) ---
         mock_processed_doc.get.return_value.exists = False # Document doesn't exist
 
-        # Mock LLM instances
-        mock_llm_instance = MagicMock()
-        mock_vertex.return_value = mock_llm_instance
+        # Mock LLM instances - Use separate mocks for Sales and Safety to avoid call counting confusion
+        mock_sales_llm = MagicMock()
+        mock_safety_model = MagicMock()
+
+        mock_vertex.return_value = mock_sales_llm # Default, though we override via patch
 
         # Mock responses
+
+        # Sales Agent (Main LLM)
+        mock_sales_llm.invoke.return_value = MagicMock(content="Response Text")
+
+        # Safety Model (Intent, Audit, Feedback)
         # 1. Intent/Tone analysis
-        # 2. RAG Response
-        # 3. Safety Check
-        # 4. Feedback Decision (Optional)
+        # 2. Audit (Parallel)
+        # 3. Feedback Decision (Parallel)
+
+        # Note: Audit and Feedback run in parallel. We use "SI" (Positive) for both so order doesn't matter.
+        # "SI" for Audit -> Safe (no "PELIGRO")
+        # "SI" for Feedback -> True
+        mock_safety_model.invoke.side_effect = [
+            MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
+            MagicMock(content="SI"), # Parallel 1 (Audit/Feedback)
+            MagicMock(content="SI")  # Parallel 2 (Audit/Feedback)
+        ]
 
         # We also need to mock _search_cars or ensure it doesn't crash
         # _search_cars calls inventory_vectors.find_nearest().get()
         mock_vectors_coll.find_nearest.return_value.get.return_value = [] # No results, fine
 
-        mock_llm_instance.invoke.side_effect = [
-            MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
-            MagicMock(content="Response Text"), # Sales Agent Response
-            MagicMock(content="APROBADO"), # Audit
-            MagicMock(content="NO") # Feedback
-        ]
-
         # Patch _init_services to return our LLM
-        with patch('brain._init_services', return_value=mock_llm_instance):
+        with patch('brain._init_services', return_value=mock_sales_llm):
             # Manually set _db_client because we bypassed _init_services
             brain._db_client = mock_db
-            brain._safety_model = mock_llm_instance # Reuse for simplicity
+            brain._safety_model = mock_safety_model # Explicit safety model
 
             response = brain.process_message("Hello", "123456", "msg_new_123")
 
         # Verification
-        self.assertEqual(response, "Response Text")
+        # Since parallel execution enables feedback (SI), check containment
+        self.assertIn("Response Text", response)
         mock_processed_doc.set.assert_called_once() # Should have saved the ID
 
         # --- Test Case 2: Duplicate Message ---
