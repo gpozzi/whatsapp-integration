@@ -112,11 +112,14 @@ class TestFeedbackLoop(unittest.TestCase):
         # 5. _should_ask_feedback -> SI
 
         mock_llm_instance = MagicMock()
+        # For parallel execution, we need to ensure valid responses for both
+        # _audit_response (needs NO "PELIGRO") and _should_ask_feedback (needs "SI")
+        # regardless of execution order.
         mock_llm_instance.invoke.side_effect = [
             MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
             MagicMock(content="Here is a car"), # Sales Agent
-            MagicMock(content="SI"), # Feedback
-            MagicMock(content="EXTRA_CALL") # Safety buffer
+            MagicMock(content="SI"), # Parallel 1 (Audit or Feedback)
+            MagicMock(content="SI")  # Parallel 2 (Audit or Feedback)
         ]
 
         with patch("brain._init_services", return_value=mock_llm_instance), \
