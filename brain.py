@@ -24,6 +24,8 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+# Global executor for async tasks and parallel processing
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -544,8 +546,20 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
+    # 2. Análisis de Intención y Tono & Búsqueda Vectorial (Paralelo)
+    # ⚡ Performance: Ejecutamos análisis de intención y búsqueda en paralelo
+    future_intent = _executor.submit(_analyze_tone_and_intent, user_text, history)
+
+    # Preparamos query de búsqueda (Optimistic Search)
+    search_query = user_text
+    if image_context:
+        search_query += f" {image_context}"
+
+    # Lanzamos búsqueda mientras se analiza la intención
+    future_search = _executor.submit(_search_cars, search_query)
+
+    # Esperamos resultados de intención
+    analysis = future_intent.result()
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
     config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
@@ -563,13 +577,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
 
         else:
             # 5. Flujo Normal (RAG con Vector Search)
-
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recuperamos resultado de la búsqueda paralela
+            inventory_context = future_search.result()
 
             # Construir Prompt RAG
             prompt = (
@@ -585,12 +594,17 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             response = sales_llm.invoke(prompt)
             final_text = response.content
 
-            # Auditoría de Seguridad
-            if not _audit_response(final_text):
+            # Auditoría y Decisión de Feedback (Paralelo)
+            # ⚡ Performance: Ejecutamos verificaciones finales en paralelo
+            future_audit = _executor.submit(_audit_response, final_text)
+            future_feedback = _executor.submit(_should_ask_feedback, final_text)
+
+            # Esperamos auditoría (Bloqueante por seguridad)
+            if not future_audit.result():
                 return "No puedo procesar esa solicitud por motivos de seguridad."
 
             # 6. Decisión de Feedback (Supervisor)
-            if _should_ask_feedback(final_text):
+            if future_feedback.result():
                 final_text += " (¿Te sirvió esta info? Responde SÍ o NO)"
 
         # Guardar Interacción
