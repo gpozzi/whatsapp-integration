@@ -13,6 +13,19 @@ except ImportError:
 
 from langchain_google_vertexai import VertexAIEmbeddings
 
+# Global singleton for embeddings to reuse connection
+_ingestor_embeddings_service = None
+
+def _get_embeddings_service():
+    global _ingestor_embeddings_service
+    if _ingestor_embeddings_service is None:
+        _ingestor_embeddings_service = VertexAIEmbeddings(
+            model_name="text-embedding-004",
+            project=config.PROJECT_ID,
+            location=config.LOCATION
+        )
+    return _ingestor_embeddings_service
+
 def sync_inventory(request):
     """
     Maneja la sincronización del inventario.
@@ -51,11 +64,7 @@ def sync_inventory(request):
         config.logger.info(f"🧬 Generando embedding para: {text_to_embed[:50]}...")
 
         # 4. Generar Embedding con Vertex AI
-        embeddings_service = VertexAIEmbeddings(
-            model_name="text-embedding-004",
-            project=config.PROJECT_ID,
-            location=config.LOCATION
-        )
+        embeddings_service = _get_embeddings_service()
         vector_values = embeddings_service.embed_query(text_to_embed)
 
         # 5. Guardar en Firestore
