@@ -88,9 +88,27 @@ class TestFeedbackLoop(unittest.TestCase):
             MagicMock(content='{"insight": "fail", "user_explanation": "Sorry"}') # Failure analysis
         ]
 
+        # Create a mock executor that runs immediately to avoid threading issues in tests
+        mock_executor = MagicMock()
+        def instant_submit(func, *args, **kwargs):
+            try:
+                result = func(*args, **kwargs)
+                future = MagicMock()
+                future.result.return_value = result
+                return future
+            except Exception as e:
+                future = MagicMock()
+                future.result.side_effect = e
+                return future
+        mock_executor.submit.side_effect = instant_submit
+
         # Patch dependencies
+        # Bolt: Added patch for _search_cars because Optimistic Search now always triggers it.
+        # Bolt: Patch _executor to enforce synchronous execution in test
         with patch("brain._init_services", return_value=mock_llm_instance), \
-             patch("brain._manage_history", return_value="Historial"):
+             patch("brain._manage_history", return_value="Historial"), \
+             patch("brain._search_cars", return_value="Ignored Context"), \
+             patch("brain._executor", mock_executor):
 
             # Inject mocks into brain
             brain._safety_model = mock_llm_instance
@@ -119,9 +137,25 @@ class TestFeedbackLoop(unittest.TestCase):
             MagicMock(content="EXTRA_CALL") # Safety buffer
         ]
 
+        # Create a mock executor that runs immediately to avoid threading issues in tests
+        mock_executor = MagicMock()
+        def instant_submit(func, *args, **kwargs):
+            try:
+                result = func(*args, **kwargs)
+                future = MagicMock()
+                future.result.return_value = result
+                return future
+            except Exception as e:
+                future = MagicMock()
+                future.result.side_effect = e
+                return future
+        mock_executor.submit.side_effect = instant_submit
+
+        # Bolt: Patch _executor to enforce synchronous execution in test
         with patch("brain._init_services", return_value=mock_llm_instance), \
              patch("brain._manage_history", return_value="Historial"), \
-             patch("brain._search_cars", return_value="Inventory Context"):
+             patch("brain._search_cars", return_value="Inventory Context"), \
+             patch("brain._executor", mock_executor):
 
             brain._safety_model = mock_llm_instance
             brain._db_client = MagicMock()
