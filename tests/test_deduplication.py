@@ -25,6 +25,7 @@ class TestDeduplication(unittest.TestCase):
         # Reset Global State in Brain
         brain._db_client = None
         brain._safety_model = None
+        brain._executor = MagicMock() # Mock executor to prevent race conditions
 
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
