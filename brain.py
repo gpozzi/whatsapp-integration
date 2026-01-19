@@ -12,6 +12,7 @@ except ImportError:
     # Fallback for environments where Vector is not available or older library versions
     Vector = lambda x: x
 
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import texttospeech
 import base64
 
@@ -21,6 +22,7 @@ from langchain_core.messages import HumanMessage
 import config
 
 # --- ESTADO GLOBAL ---
+_executor = ThreadPoolExecutor(max_workers=4)
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
@@ -280,14 +282,14 @@ def _check_is_duplicate(message_id: str) -> bool:
 
     doc_ref = _db_client.collection("processed_messages").document(message_id)
     try:
-        if doc_ref.get().exists:
-            return True
-
-        doc_ref.set({
+        # Atomic creation: fails if document already exists
+        doc_ref.create({
             "timestamp": firestore.SERVER_TIMESTAMP,
             "status": "processing"
         })
         return False
+    except AlreadyExists:
+        return True
     except Exception as e:
         config.logger.error(f"Error verificando duplicado: {e}")
         return False

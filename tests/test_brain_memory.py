@@ -5,6 +5,8 @@ import os
 
 # --- MOCK DEPENDENCIES BEFORE IMPORTING BRAIN ---
 sys.modules['google'] = MagicMock()
+sys.modules['google.api_core'] = MagicMock()
+sys.modules['google.api_core.exceptions'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
 sys.modules['googleapiclient'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()

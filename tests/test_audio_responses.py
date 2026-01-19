@@ -11,6 +11,8 @@ mock_google_auth = MagicMock()
 mock_discovery = MagicMock()
 
 sys.modules["google"] = MagicMock()
+sys.modules["google.api_core"] = MagicMock()
+sys.modules["google.api_core.exceptions"] = MagicMock()
 sys.modules["google.cloud"] = MagicMock()
 sys.modules["google.cloud.firestore"] = mock_firestore
 sys.modules["google.cloud.texttospeech"] = mock_texttospeech

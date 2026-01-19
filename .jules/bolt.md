@@ -1,3 +1,3 @@
-## 2026-01-11 - [Initial Performance Optimization]
-**Learning:** Instantiating `VertexAIEmbeddings` for every user query (in `_search_cars`) creates significant overhead due to authentication and connection setup.
-**Action:** Implemented a Singleton pattern for the embeddings service in `brain.py`, initializing it once in `_init_services` and reusing it globally. Future services should follow this pattern unless thread-safety is a concern.
+## 2026-01-19 - [Firestore Deduplication Optimization]
+**Learning:** Replacing a read-then-write pattern (`get().exists` + `set()`) with an atomic `create()` operation (catching `AlreadyExists`) reduces database round-trips by 50% for new records and eliminates race conditions.
+**Action:** Always prefer atomic operations like `create()` or `update()` over `get()` + logic + `set()` when consistency or latency is a concern.
