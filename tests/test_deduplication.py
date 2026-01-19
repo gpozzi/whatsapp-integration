@@ -5,6 +5,8 @@ import os
 
 # --- MOCK DEPENDENCIES BEFORE IMPORTING BRAIN ---
 sys.modules['google'] = MagicMock()
+sys.modules['google.api_core'] = MagicMock()
+sys.modules['google.api_core.exceptions'] = MagicMock()
 sys.modules['google.auth'] = MagicMock()
 sys.modules['googleapiclient'] = MagicMock()
 sys.modules['googleapiclient.discovery'] = MagicMock()
@@ -25,6 +27,7 @@ class TestDeduplication(unittest.TestCase):
         # Reset Global State in Brain
         brain._db_client = None
         brain._safety_model = None
+        brain._executor = MagicMock()
 
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
@@ -60,7 +63,7 @@ class TestDeduplication(unittest.TestCase):
         mock_history_coll.document.return_value = mock_history_doc
 
         # --- Test Case 1: New Message (Not a Duplicate) ---
-        mock_processed_doc.get.return_value.exists = False # Document doesn't exist
+        # create() should succeed (no exception raised)
 
         # Mock LLM instances
         mock_llm_instance = MagicMock()
@@ -93,18 +96,27 @@ class TestDeduplication(unittest.TestCase):
 
         # Verification
         self.assertEqual(response, "Response Text")
-        mock_processed_doc.set.assert_called_once() # Should have saved the ID
+        mock_processed_doc.create.assert_called_once() # Should have called create()
 
         # --- Test Case 2: Duplicate Message ---
         mock_processed_doc.reset_mock()
-        mock_processed_doc.set.reset_mock()
-        mock_processed_doc.get.return_value.exists = True # Document exists
+        mock_processed_doc.create.reset_mock()
+
+        # Define a Mock Exception for testing
+        class MockAlreadyExists(Exception):
+            pass
+
+        # Inject this mock exception into brain so it catches it
+        brain.AlreadyExists = MockAlreadyExists
+
+        # Simulate AlreadyExists exception when create() is called
+        mock_processed_doc.create.side_effect = MockAlreadyExists()
 
         response = brain.process_message("Hello Again", "123456", "msg_existing_123")
 
         # Verification
         self.assertIsNone(response)
-        mock_processed_doc.set.assert_not_called() # Should NOT save again
+        mock_processed_doc.create.assert_called_once() # Should have attempted create()
 
 if __name__ == '__main__':
     unittest.main()
