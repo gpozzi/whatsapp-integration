@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import requests
 import time
 import json
+import secrets
 import base64
 import urllib.parse
 import gunicorn
@@ -211,7 +212,9 @@ def whatsapp_webhook():
     """
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
-        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
+        token_sent = request.args.get("hub.verify_token")
+        # Security: Use constant-time comparison to prevent timing attacks
+        if token_sent and config.VERIFY_TOKEN and secrets.compare_digest(token_sent, config.VERIFY_TOKEN):
             return request.args.get("hub.challenge"), 200
         return "Forbidden", 403
 
