@@ -9,6 +9,7 @@ from google.cloud import pubsub_v1
 import config
 import brain
 import ingestor
+import security
 
 # --- FLASK APP INITIALIZATION ---
 app = Flask(__name__)
@@ -217,6 +218,14 @@ def whatsapp_webhook():
 
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
+        # --- SECURITY CHECK ---
+        if config.APP_SECRET:
+            if not security.validate_whatsapp_signature(request, config.APP_SECRET):
+                config.logger.warning("⛔ Invalid WhatsApp Signature. Request rejected.")
+                return "Forbidden", 403
+        else:
+            config.logger.warning("⚠️ APP_SECRET not set. Skipping signature verification.")
+
         try:
             data = request.get_json()
 
