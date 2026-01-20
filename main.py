@@ -20,6 +20,9 @@ except Exception as e:
     config.logger.warning(f"Could not initialize PublisherClient (Local env?): {e}")
     publisher = None
 
+# ⚡ Performance: Reutilizar conexiones HTTP (Keep-Alive) para llamadas a Meta
+http = requests.Session()
+
 # --- Helper Functions (Shared) ---
 
 def send_whatsapp(phone, text):
@@ -36,7 +39,8 @@ def send_whatsapp(phone, text):
             "text": {"body": text}
         }
         # Security enhancement: Add timeout to prevent hanging
-        requests.post(url, headers=headers, json=payload, timeout=10)
+        # Performance: Use global session
+        http.post(url, headers=headers, json=payload, timeout=10)
     except Exception as e:
         config.logger.error(f"Error enviando WhatsApp: {e}")
 
@@ -53,7 +57,7 @@ def mark_as_read(message_id):
             "status": "read",
             "message_id": message_id
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = http.post(url, headers=headers, json=payload, timeout=10)
         response.raise_for_status()
     except Exception as e:
         config.logger.error(f"Error marcando mensaje como leído: {e}")
@@ -65,7 +69,7 @@ def get_media_url(media_id):
         headers = {
             "Authorization": f"Bearer {config.WHATSAPP_TOKEN}"
         }
-        response = requests.get(url, headers=headers, timeout=10)
+        response = http.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json().get('url')
     except Exception as e:
@@ -98,7 +102,7 @@ def download_media(media_url):
         headers = {
             "Authorization": f"Bearer {config.WHATSAPP_TOKEN}"
         }
-        response = requests.get(media_url, headers=headers, timeout=20)
+        response = http.get(media_url, headers=headers, timeout=20)
         response.raise_for_status()
         return response.content
     except Exception as e:
@@ -116,7 +120,7 @@ def upload_media_to_whatsapp(media_bytes, mime_type):
             'file': ('audio.mp3', media_bytes, mime_type),
             'messaging_product': (None, 'whatsapp')
         }
-        response = requests.post(url, headers=headers, files=files, timeout=30)
+        response = http.post(url, headers=headers, files=files, timeout=30)
         response.raise_for_status()
         return response.json().get('id')
     except Exception as e:
@@ -137,7 +141,7 @@ def send_whatsapp_audio(phone, media_id):
             "type": "audio",
             "audio": {"id": media_id}
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = http.post(url, headers=headers, json=payload, timeout=10)
         response.raise_for_status()
     except Exception as e:
         config.logger.error(f"Error enviando Audio WhatsApp: {e}")

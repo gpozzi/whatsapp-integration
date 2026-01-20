@@ -25,6 +25,9 @@ _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
 
+# ⚡ Performance: ThreadPool for async tasks (Intent Analysis, Audits, User Profile)
+_executor = ThreadPoolExecutor(max_workers=4)
+
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
 MODEL_SAFETY = "gemini-2.5-flash-lite"
