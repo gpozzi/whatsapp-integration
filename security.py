@@ -1,8 +1,42 @@
 import ast
+import hmac
+import hashlib
+import secrets
 
 class SecurityError(Exception):
     """Excepción lanzada cuando se detecta código inseguro."""
     pass
+
+def validate_whatsapp_signature(request, app_secret: str) -> bool:
+    """Valida la firma HMAC-SHA256 de WhatsApp.
+
+    Args:
+        request: El objeto request de Flask.
+        app_secret (str): El secreto de la aplicación (App Secret).
+
+    Returns:
+        bool: True si la firma es válida, False en caso contrario.
+    """
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not signature or not signature.startswith("sha256="):
+        return False
+
+    try:
+        # Extraer el hash recibido
+        sig_hash = signature.split("=")[1]
+
+        # Calcular el HMAC esperado
+        # request.get_data() devuelve los bytes raw del body
+        expected_hash = hmac.new(
+            app_secret.encode('utf-8'),
+            request.get_data(),
+            hashlib.sha256
+        ).hexdigest()
+
+        # Comparación segura
+        return secrets.compare_digest(sig_hash, expected_hash)
+    except Exception:
+        return False
 
 def validate_python_code(code: str) -> None:
     """Valida que el código Python no contenga importaciones peligrosas.
