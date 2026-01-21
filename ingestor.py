@@ -13,11 +13,16 @@ except ImportError:
 
 from langchain_google_vertexai import VertexAIEmbeddings
 
+# --- Global State for Singleton Pattern ---
+_embeddings_service = None
+
 def sync_inventory(request):
     """
     Maneja la sincronización del inventario.
     Recibe JSON, genera embeddings y guarda en Firestore Vector Search.
     """
+    global _embeddings_service
+
     # 1. Seguridad: Verificar API Key
     api_key = request.headers.get("X-API-KEY")
     server_key = config.SYNC_API_KEY
@@ -50,13 +55,16 @@ def sync_inventory(request):
         text_to_embed = " ".join(text_parts)
         config.logger.info(f"🧬 Generando embedding para: {text_to_embed[:50]}...")
 
-        # 4. Generar Embedding con Vertex AI
-        embeddings_service = VertexAIEmbeddings(
-            model_name="text-embedding-004",
-            project=config.PROJECT_ID,
-            location=config.LOCATION
-        )
-        vector_values = embeddings_service.embed_query(text_to_embed)
+        # 4. Generar Embedding con Vertex AI (Singleton)
+        if _embeddings_service is None:
+            config.logger.info("🔌 Inicializando servicio de Embeddings (Singleton)...")
+            _embeddings_service = VertexAIEmbeddings(
+                model_name="text-embedding-004",
+                project=config.PROJECT_ID,
+                location=config.LOCATION
+            )
+
+        vector_values = _embeddings_service.embed_query(text_to_embed)
 
         # 5. Guardar en Firestore
         db = firestore.Client(project=config.PROJECT_ID, database=config.DATABASE_NAME)
