@@ -34,6 +34,9 @@ class TestDeduplication(unittest.TestCase):
     def test_deduplication(self, mock_vector_cls, mock_vertex):
         """Test that duplicate message IDs are handled correctly."""
 
+        # Mock executor to prevent background tasks from running
+        brain._executor = MagicMock()
+
         # Configure the Firestore Mock we injected in setUp
         mock_db = MagicMock()
         brain.firestore.Client.return_value = mock_db
