@@ -25,14 +25,31 @@ class TestDeduplication(unittest.TestCase):
         # Reset Global State in Brain
         brain._db_client = None
         brain._safety_model = None
+        brain._embeddings_service = None
 
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
-    def test_deduplication(self, mock_vector_cls, mock_vertex):
+    @patch('brain._executor')
+    def test_deduplication(self, mock_executor, mock_vector_cls, mock_vertex):
         """Test that duplicate message IDs are handled correctly."""
+
+        # Configure Executor Mock to handle parallel tasks synchronously
+        # and ignore background tasks like _update_user_profile
+        def submit_side_effect(fn, *args, **kwargs):
+            # Ignore background user profile updates
+            if fn.__name__ == '_update_user_profile':
+                 return MagicMock()
+
+            # Execute other tasks immediately (simulate completion)
+            result = fn(*args, **kwargs)
+            future = MagicMock()
+            future.result.return_value = result
+            return future
+
+        mock_executor.submit.side_effect = submit_side_effect
 
         # Configure the Firestore Mock we injected in setUp
         mock_db = MagicMock()
