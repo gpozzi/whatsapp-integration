@@ -3,9 +3,14 @@ from unittest.mock import MagicMock, patch, ANY
 import sys
 import brain
 import config
+from concurrent.futures import ThreadPoolExecutor
 
 class TestBrainVectorSearch(unittest.TestCase):
     def setUp(self):
+        # Replace global executor
+        self.original_executor = brain._executor
+        brain._executor = ThreadPoolExecutor(max_workers=1)
+
         # Reset global state in brain
         brain._db_client = None
         brain._safety_model = None
@@ -37,6 +42,9 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.mock_chat_vertex_ai_cls.side_effect = side_effect_chat
 
     def tearDown(self):
+        brain._executor.shutdown(wait=True)
+        brain._executor = self.original_executor
+
         self.patcher_firestore.stop()
         self.patcher_chat_vertex_ai.stop()
         self.patcher_vertex_embeddings.stop()

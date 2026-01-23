@@ -18,6 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import brain
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 class TestDeduplication(unittest.TestCase):
 
@@ -26,8 +27,17 @@ class TestDeduplication(unittest.TestCase):
         brain._db_client = None
         brain._safety_model = None
 
+        # Replace global executor with a fresh one to avoid ghost tasks from previous tests
+        self.original_executor = brain._executor
+        brain._executor = ThreadPoolExecutor(max_workers=1)
+
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
+
+    def tearDown(self):
+        # Shutdown the temporary executor and restore the original
+        brain._executor.shutdown(wait=True)
+        brain._executor = self.original_executor
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
