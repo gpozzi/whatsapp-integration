@@ -4,9 +4,14 @@ import sys
 import brain
 import config
 from google.cloud import firestore
+from concurrent.futures import ThreadPoolExecutor
 
 class TestFeedbackLoop(unittest.TestCase):
     def setUp(self):
+        # Replace global executor to avoid ghost tasks
+        self.original_executor = brain._executor
+        brain._executor = ThreadPoolExecutor(max_workers=1)
+
         brain._db_client = MagicMock()
         brain._safety_model = MagicMock()
 
@@ -14,6 +19,10 @@ class TestFeedbackLoop(unittest.TestCase):
         brain._check_is_duplicate = MagicMock(return_value=False)
         brain._manage_history = MagicMock(return_value="User: Hello\nBot: Hi")
         brain._audit_response = MagicMock(return_value=True)
+
+    def tearDown(self):
+        brain._executor.shutdown(wait=True)
+        brain._executor = self.original_executor
 
     def test_classify_intent_positive_feedback(self):
         """Test that _analyze_tone_and_intent correctly identifies positive feedback."""

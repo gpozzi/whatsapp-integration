@@ -24,6 +24,8 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+# Global executor for parallel tasks (e.g. background profile updates, parallel RAG)
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -544,8 +546,19 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
+    # 2. Análisis de Intención y Tono (Optimistic Search)
+    # ⚡ Performance: Ejecutamos análisis de intención y búsqueda vectorial en paralelo
+    future_intent = _executor.submit(_analyze_tone_and_intent, user_text, history)
+
+    # Preparamos query de búsqueda (Optimista)
+    search_query = user_text
+    if image_context:
+        search_query += f" {image_context}"
+
+    future_search = _executor.submit(_search_cars, search_query)
+
+    # Esperamos resultado de intención
+    analysis = future_intent.result()
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
     config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
@@ -564,12 +577,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recuperamos resultado de búsqueda (ya debería estar listo)
+            inventory_context = future_search.result()
 
             # Construir Prompt RAG
             prompt = (
