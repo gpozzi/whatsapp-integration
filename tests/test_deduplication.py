@@ -18,6 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import brain
 import datetime
+import concurrent.futures
 
 class TestDeduplication(unittest.TestCase):
 
@@ -28,6 +29,15 @@ class TestDeduplication(unittest.TestCase):
 
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
+
+        # Isolate Executor to prevent cross-test contamination
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.executor_patcher = patch('brain._executor', self.executor)
+        self.executor_patcher.start()
+
+    def tearDown(self):
+        self.executor_patcher.stop()
+        self.executor.shutdown(wait=True)
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
