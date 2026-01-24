@@ -7,3 +7,8 @@
 **Vulnerability:** The `download_media` function blindly sent the `Authorization` header to any URL it was given. An attacker could potentially manipulate input to trigger a request to an external server (or internal resource) and capture the credentials (SSRF).
 **Learning:** `requests` automatically handles redirects, but if the initial URL is not validated, or if code blindly trusts a URL param, it can be abused. Additionally, checking for domain suffixes (e.g. `endswith('facebook.com')`) is insufficient as it allows domains like `evilfacebook.com`.
 **Prevention:** Explicitly validate URL schemes (`https`) and allowlist trusted domains using exact matches or proper subdomain checks (`.example.com`).
+
+## 2026-01-24 - [Webhook Verification Bypass & Timing Attack]
+**Vulnerability:** The WhatsApp webhook verification checked `hub.verify_token` against `config.VERIFY_TOKEN` using `==`. This is vulnerable to timing attacks. Crucially, if `config.VERIFY_TOKEN` is missing (None), `None == None` evaluates to True, allowing unauthorized verification bypass.
+**Learning:** `None` values in security comparisons can lead to catastrophic bypasses. Standard string comparison is not timing-safe.
+**Prevention:** Always ensure configuration values are present (not None) before comparison. Use `secrets.compare_digest` for all secret comparisons.
