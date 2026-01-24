@@ -24,6 +24,7 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -544,6 +545,14 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
+    # ⚡ Performance (Optimistic Search): Iniciamos búsqueda de autos en paralelo al análisis de intención.
+    # Asumimos que la mayoría de mensajes son consultas (SALES_QUERY), así ganamos tiempo.
+    search_query = user_text
+    if image_context:
+        search_query += f" {image_context}"
+
+    search_future = _executor.submit(_search_cars, search_query)
+
     # 2. Análisis de Intención y Tono
     analysis = _analyze_tone_and_intent(user_text, history)
     intent = analysis["intent"]
@@ -564,12 +573,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recuperamos el resultado de la búsqueda asíncrona
+            inventory_context = search_future.result()
 
             # Construir Prompt RAG
             prompt = (
