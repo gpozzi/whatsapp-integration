@@ -24,6 +24,8 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+# Global executor for background tasks (e.g., profile updates) to avoid blocking main thread
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
