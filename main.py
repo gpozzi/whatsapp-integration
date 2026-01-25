@@ -4,6 +4,7 @@ import time
 import json
 import base64
 import urllib.parse
+import secrets
 import gunicorn
 from google.cloud import pubsub_v1
 import config
@@ -211,8 +212,16 @@ def whatsapp_webhook():
     """
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
-        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
+        verify_token = request.args.get("hub.verify_token")
+        expected_token = config.VERIFY_TOKEN
+
+        # Security: Prevent timing attacks and handle misconfiguration (None)
+        if verify_token and expected_token and secrets.compare_digest(verify_token, expected_token):
             return request.args.get("hub.challenge"), 200
+
+        if not expected_token:
+            config.logger.warning("⚠️ Security: VERIFY_TOKEN is not set in environment. Webhook verification failed safely.")
+
         return "Forbidden", 403
 
     # 2. Recepción de Mensajes (POST)

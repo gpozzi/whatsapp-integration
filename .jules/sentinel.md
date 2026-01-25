@@ -7,3 +7,8 @@
 **Vulnerability:** The `download_media` function blindly sent the `Authorization` header to any URL it was given. An attacker could potentially manipulate input to trigger a request to an external server (or internal resource) and capture the credentials (SSRF).
 **Learning:** `requests` automatically handles redirects, but if the initial URL is not validated, or if code blindly trusts a URL param, it can be abused. Additionally, checking for domain suffixes (e.g. `endswith('facebook.com')`) is insufficient as it allows domains like `evilfacebook.com`.
 **Prevention:** Explicitly validate URL schemes (`https`) and allowlist trusted domains using exact matches or proper subdomain checks (`.example.com`).
+
+## 2026-01-08 - [Null Bypass in Webhook Verification]
+**Vulnerability:** The webhook verification logic compared `hub.verify_token` against `config.VERIFY_TOKEN` using `==`. If the environment variable was missing (defaulting to `None`), an attacker could bypass verification by omitting the token (sending `None`), as `None == None` is `True`.
+**Learning:** Defaulting configuration secrets to `None` without explicit checks creates "fail-open" vulnerabilities where misconfiguration leads to total security bypass.
+**Prevention:** Explicitly check that secrets are not `None` or empty before comparison. Use `if expected_token and received_token and secrets.compare_digest(...)` to ensure both presence and validity.
