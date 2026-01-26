@@ -30,6 +30,12 @@ class TestAudioResponses(unittest.TestCase):
         brain._df_inventory = MagicMock()
         brain._inventory_timestamp = brain.datetime.datetime.now(brain.datetime.timezone.utc)
 
+        self.executor_patcher = patch('brain._executor')
+        self.executor_patcher.start()
+
+    def tearDown(self):
+        self.executor_patcher.stop()
+
     def test_config_values(self):
         self.assertEqual(config.TTS_VOICE_FEMALE, "es-US-Neural2-C", "Female voice should be Neural2-C")
 
