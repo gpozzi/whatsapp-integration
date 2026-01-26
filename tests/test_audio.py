@@ -29,6 +29,9 @@ class TestAudioFeatures(unittest.TestCase):
         brain._db_client = MagicMock()
         brain._safety_model = MagicMock()
 
+        self.executor_patcher = patch('brain._executor')
+        self.executor_patcher.start()
+
         # Re-bind brain imports to current mocks (fix for discover stale mocks)
         brain.ChatVertexAI = sys.modules["langchain_google_vertexai"].ChatVertexAI
         brain.HumanMessage = sys.modules["langchain_core.messages"].HumanMessage
@@ -200,6 +203,7 @@ class TestAudioFeatures(unittest.TestCase):
 
     def tearDown(self):
         self.config_patcher.stop()
+        self.executor_patcher.stop()
 
 if __name__ == '__main__':
     unittest.main()

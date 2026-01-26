@@ -29,9 +29,10 @@ class TestDeduplication(unittest.TestCase):
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
 
+    @patch('brain._executor')
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
-    def test_deduplication(self, mock_vector_cls, mock_vertex):
+    def test_deduplication(self, mock_vector_cls, mock_vertex, mock_executor):
         """Test that duplicate message IDs are handled correctly."""
 
         # Configure the Firestore Mock we injected in setUp
