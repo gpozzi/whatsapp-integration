@@ -34,6 +34,22 @@ class TestDeduplication(unittest.TestCase):
     def test_deduplication(self, mock_vector_cls, mock_vertex):
         """Test that duplicate message IDs are handled correctly."""
 
+        # Patch executor to run synchronously to ensure side_effect order
+        mock_executor = MagicMock()
+        def sync_submit(fn, *args, **kwargs):
+            future = MagicMock()
+            try:
+                result = fn(*args, **kwargs)
+                future.result.return_value = result
+            except Exception as e:
+                future.result.side_effect = e
+            return future
+        mock_executor.submit.side_effect = sync_submit
+
+        executor_patcher = patch('brain._executor', mock_executor)
+        executor_patcher.start()
+        self.addCleanup(executor_patcher.stop)
+
         # Configure the Firestore Mock we injected in setUp
         mock_db = MagicMock()
         brain.firestore.Client.return_value = mock_db
