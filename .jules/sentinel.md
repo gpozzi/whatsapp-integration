@@ -7,3 +7,8 @@
 **Vulnerability:** The `download_media` function blindly sent the `Authorization` header to any URL it was given. An attacker could potentially manipulate input to trigger a request to an external server (or internal resource) and capture the credentials (SSRF).
 **Learning:** `requests` automatically handles redirects, but if the initial URL is not validated, or if code blindly trusts a URL param, it can be abused. Additionally, checking for domain suffixes (e.g. `endswith('facebook.com')`) is insufficient as it allows domains like `evilfacebook.com`.
 **Prevention:** Explicitly validate URL schemes (`https`) and allowlist trusted domains using exact matches or proper subdomain checks (`.example.com`).
+
+## 2026-01-27 - [Token Verification Bypass via None Comparison]
+**Vulnerability:** Comparing an optional environment variable against an optional request parameter (e.g. `req_token == env_token`) can evaluate to `True` if both are `None` (unconfigured env var and missing param).
+**Learning:** Simple equality checks fail open when configuration is missing.
+**Prevention:** Explicitly check that the secret is not None/Empty before comparison, and use `secrets.compare_digest` for the actual check.
