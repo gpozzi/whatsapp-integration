@@ -24,6 +24,7 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -544,8 +545,18 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
+    # 2. Análisis de Intención y Tono (y Búsqueda Optimista en Paralelo)
+    # ⚡ Performance: Lanzamos el análisis de intención y la búsqueda vectorial en paralelo.
+    future_analysis = _executor.submit(_analyze_tone_and_intent, user_text, history)
+
+    # Preparamos query de búsqueda (optimista, asumimos que será SALES_QUERY)
+    search_query = user_text
+    if image_context:
+        search_query += f" {image_context}"
+    future_search = _executor.submit(_search_cars, search_query)
+
+    # Esperamos análisis (bloqueante, pero search corre en paralelo)
+    analysis = future_analysis.result()
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
     config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
@@ -563,13 +574,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
 
         else:
             # 5. Flujo Normal (RAG con Vector Search)
-
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recuperamos resultado de búsqueda (ya debería estar listo o casi listo)
+            inventory_context = future_search.result()
 
             # Construir Prompt RAG
             prompt = (
