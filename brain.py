@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage
 import config
 
 # --- ESTADO GLOBAL ---
+_executor = ThreadPoolExecutor(max_workers=4)
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
@@ -544,7 +545,14 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
-    # 2. Análisis de Intención y Tono
+    # 2. Análisis de Intención y Tono (Optimistic Search Pattern)
+    # ⚡ Performance: Lanzamos búsqueda en paralelo mientras analizamos intención
+    search_query = user_text
+    if image_context:
+        search_query += f" {image_context}"
+
+    search_future = _executor.submit(_search_cars, search_query)
+
     analysis = _analyze_tone_and_intent(user_text, history)
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
@@ -564,12 +572,9 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recogemos resultado de la búsqueda optimista
+            # Si _analyze_tone_and_intent tardó más que _search_cars, esto retorna inmediato.
+            inventory_context = search_future.result()
 
             # Construir Prompt RAG
             prompt = (
