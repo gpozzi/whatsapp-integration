@@ -31,8 +31,11 @@ class TestDeduplication(unittest.TestCase):
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
-    def test_deduplication(self, mock_vector_cls, mock_vertex):
+    @patch('brain._executor')
+    def test_deduplication(self, mock_executor, mock_vector_cls, mock_vertex):
         """Test that duplicate message IDs are handled correctly."""
+        # Ensure synchronous execution for side_effect stability
+        mock_executor.submit.side_effect = lambda f, *args, **kwargs: f(*args, **kwargs)
 
         # Configure the Firestore Mock we injected in setUp
         mock_db = MagicMock()
@@ -80,7 +83,8 @@ class TestDeduplication(unittest.TestCase):
             MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
             MagicMock(content="Response Text"), # Sales Agent Response
             MagicMock(content="APROBADO"), # Audit
-            MagicMock(content="NO") # Feedback
+            MagicMock(content="NO"), # Feedback
+            MagicMock(content='{"budget": null}') # User Profile Update (Async/Sync)
         ]
 
         # Patch _init_services to return our LLM
