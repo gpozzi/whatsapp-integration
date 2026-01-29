@@ -46,6 +46,9 @@ class TestMainTimestamp(unittest.TestCase):
         # Reload main to ensure it uses the mocked configuration
         importlib.reload(main)
 
+        # Disable signature verification for these tests
+        main.config.APP_SECRET = None
+
         # Force publisher to be a fresh MagicMock to ensure isolation between tests
         main.publisher = MagicMock()
 

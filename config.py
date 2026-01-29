@@ -10,6 +10,7 @@ logger = logging.getLogger("AutoBot")
 
 # --- VARIABLES DE ENTORNO ---
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN")
+APP_SECRET = os.environ.get("APP_SECRET")
 WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
 PROJECT_ID = os.environ.get("GCP_PROJECT") or os.environ.get("PROJECT_ID")

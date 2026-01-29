@@ -5,6 +5,9 @@ import json
 import base64
 import urllib.parse
 import gunicorn
+import hmac
+import hashlib
+import secrets
 from google.cloud import pubsub_v1
 import config
 import brain
@@ -98,7 +101,8 @@ def download_media(media_url):
         headers = {
             "Authorization": f"Bearer {config.WHATSAPP_TOKEN}"
         }
-        response = requests.get(media_url, headers=headers, timeout=20)
+        # Security: Disable redirects to prevent SSRF bypass
+        response = requests.get(media_url, headers=headers, timeout=20, allow_redirects=False)
         response.raise_for_status()
         return response.content
     except Exception as e:
@@ -203,6 +207,48 @@ def _process_message_logic(msg, phone):
 
 # --- WEBHOOK ROUTES ---
 
+def verify_signature(req):
+    """
+    Verifica la firma HMAC SHA256 de WhatsApp (X-Hub-Signature-256).
+    Retorna True si la firma es válida o si no se ha configurado APP_SECRET (fallback).
+    """
+    # Si no hay secreto configurado, permitimos el paso (legacy mode)
+    # pero logueamos advertencia.
+    if not config.APP_SECRET:
+        config.logger.warning("⚠️ APP_SECRET no configurado. Saltando verificación de firma.")
+        return True
+
+    signature = req.headers.get("X-Hub-Signature-256")
+    if not signature:
+        config.logger.warning("⛔ Request sin firma X-Hub-Signature-256.")
+        return False
+
+    # Formato: sha256=<hash>
+    parts = signature.split('=')
+    if len(parts) != 2 or parts[0] != 'sha256':
+        config.logger.warning("⛔ Formato de firma inválido.")
+        return False
+
+    sig_hash = parts[1]
+
+    # Calcular HMAC usando el payload raw
+    try:
+        payload = req.get_data()
+        expected_hash = hmac.new(
+            config.APP_SECRET.encode('utf-8'),
+            payload,
+            hashlib.sha256
+        ).hexdigest()
+
+        if not secrets.compare_digest(sig_hash, expected_hash):
+            config.logger.warning("⛔ Firma inválida.")
+            return False
+
+        return True
+    except Exception as e:
+        config.logger.error(f"Error verificando firma: {e}")
+        return False
+
 @app.route('/webhook', methods=['GET', 'POST'])
 @app.route("/", methods=["GET", "POST"])
 def whatsapp_webhook():
@@ -211,36 +257,19 @@ def whatsapp_webhook():
     """
     # 1. Verificación (Handshake con Meta)
     if request.method == "GET":
-        if request.args.get("hub.verify_token") == config.VERIFY_TOKEN:
+        verify_token = request.args.get("hub.verify_token")
+        if verify_token and config.VERIFY_TOKEN and secrets.compare_digest(verify_token, config.VERIFY_TOKEN):
             return request.args.get("hub.challenge"), 200
         return "Forbidden", 403
 
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
+        # Security: Verificar firma HMAC si está configurada
+        if not verify_signature(request):
+            return "Forbidden", 403
+
         try:
             data = request.get_json()
-
-            # --- NUEVA LÓGICA PARA PUB/SUB ---
-            # Si el mensaje viene de Google Pub/Sub (la caja)
-            if data and 'message' in data and 'data' in data['message']:
-                try:
-                    # 1. Abrimos la caja
-                    decoded_data = base64.b64decode(data['message']['data']).decode('utf-8')
-                    payload = json.loads(decoded_data)
-
-                    # 2. ¿Es el formato simplificado que nosotros mismos enviamos? ('msg' y 'phone')
-                    if 'msg' in payload and 'phone' in payload:
-                        config.logger.info("📩 Mensaje de Pub/Sub procesado correctamente.")
-                        # ¡AQUÍ ESTÁ LA CLAVE! Lo mandamos directo al cerebro
-                        _process_message_logic(payload['msg'], payload['phone'])
-                        return "OK", 200
-
-                    # Si no es nuestro formato, quizás sea raw (poco probable, pero por seguridad)
-                    data = payload
-                except Exception as e:
-                    config.logger.error(f"Error abriendo mensaje de Pub/Sub: {e}")
-                    return "Bad Request", 400
-            # ---------------------------------
 
             # Lógica original para mensajes directos de WhatsApp
             entries = data.get('entry', [])
