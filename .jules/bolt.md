@@ -1,3 +1,3 @@
-## 2026-01-11 - [Initial Performance Optimization]
-**Learning:** Instantiating `VertexAIEmbeddings` for every user query (in `_search_cars`) creates significant overhead due to authentication and connection setup.
-**Action:** Implemented a Singleton pattern for the embeddings service in `brain.py`, initializing it once in `_init_services` and reusing it globally. Future services should follow this pattern unless thread-safety is a concern.
+## 2026-01-29 - [Optimistic Concurrency & Crash Fix]
+**Learning:** Background tasks in `brain.py` were failing because `_executor` was not defined, causing crashes. Also, Intent Analysis and Vector Search were running sequentially, adding latency.
+**Action:** Defined `_executor = ThreadPoolExecutor(max_workers=4)` globally. Refactored `process_message` to submit both Intent Analysis and Vector Search to the executor immediately (Optimistic Search). This reduces latency by overlapping the IO-bound operations. Added `tests/test_brain_parallel.py` to verify.
