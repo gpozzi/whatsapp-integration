@@ -19,6 +19,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import brain
 import datetime
 
+# Helper class to run tasks synchronously
+class SynchronousExecutor:
+    def submit(self, fn, *args, **kwargs):
+        future = MagicMock()
+        try:
+            result = fn(*args, **kwargs)
+            future.result.return_value = result
+        except Exception as e:
+            future.result.side_effect = e
+        return future
+
 class TestDeduplication(unittest.TestCase):
 
     def setUp(self):
@@ -26,8 +37,15 @@ class TestDeduplication(unittest.TestCase):
         brain._db_client = None
         brain._safety_model = None
 
+        # Patch executor to run synchronously
+        self.original_executor = brain._executor
+        brain._executor = SynchronousExecutor()
+
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
+
+    def tearDown(self):
+        brain._executor = self.original_executor
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
@@ -71,17 +89,41 @@ class TestDeduplication(unittest.TestCase):
         # 2. RAG Response
         # 3. Safety Check
         # 4. Feedback Decision (Optional)
+        # 5. User Profile Update (Background task running synchronously now)
 
-        # We also need to mock _search_cars or ensure it doesn't crash
-        # _search_cars calls inventory_vectors.find_nearest().get()
-        mock_vectors_coll.find_nearest.return_value.get.return_value = [] # No results, fine
-
-        mock_llm_instance.invoke.side_effect = [
+        responses = iter([
             MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
             MagicMock(content="Response Text"), # Sales Agent Response
             MagicMock(content="APROBADO"), # Audit
-            MagicMock(content="NO") # Feedback
-        ]
+            MagicMock(content="NO"), # Feedback
+            MagicMock(content="{}") # User Profile Update
+        ])
+
+        def smart_side_effect(prompt_or_messages):
+            # Extract text from prompt arg
+            text = ""
+            if isinstance(prompt_or_messages, str):
+                text = prompt_or_messages
+            elif isinstance(prompt_or_messages, list):
+                 # List of BaseMessage
+                 text = prompt_or_messages[0].content if prompt_or_messages else ""
+            elif hasattr(prompt_or_messages, 'content'):
+                text = prompt_or_messages.content
+
+            # Detect stale prompt from test_brain_vector_search (lingering background task)
+            if "Toyota Corolla" in text or "Busco un auto" in text:
+                return MagicMock(content="STALE_TASK_RESPONSE")
+
+            # Return next item
+            try:
+                return next(responses)
+            except StopIteration:
+                return MagicMock(content="")
+
+        # We also need to mock _search_cars or ensure it doesn't crash
+        mock_vectors_coll.find_nearest.return_value.get.return_value = [] # No results, fine
+
+        mock_llm_instance.invoke.side_effect = smart_side_effect
 
         # Patch _init_services to return our LLM
         with patch('brain._init_services', return_value=mock_llm_instance):
