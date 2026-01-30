@@ -95,6 +95,7 @@ class TestFeedbackLoop(unittest.TestCase):
             # Inject mocks into brain
             brain._safety_model = mock_llm_instance
             brain._db_client = MagicMock()
+            brain._embeddings_service = MagicMock()
 
             result = brain.process_message("No", "12345")
 
