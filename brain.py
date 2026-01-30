@@ -24,6 +24,8 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+# Optimistic concurrency & background tasks
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -534,9 +536,21 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     # Gestión de Contexto
     history = _manage_history(phone_number)
 
-    # 1. Análisis Multimodal (si hay imagen)
+    # ⚡ Performance: Parallelize Intent Analysis & Vector Search
+    # We submit tasks to the executor early.
+
+    # Task A: Intent Analysis (always runs)
+    intent_future = _executor.submit(_analyze_tone_and_intent, user_text, history)
+
+    # Task B & C: Image Analysis (if any) & Vector Search
+    # Note: Vector search depends on image context, so we handle that dependency.
+
     image_context = ""
+    search_future = None
+
     if image_data:
+        # If image exists, analyze it first (blocking or future? blocking for simplicity in logic flow)
+        # We could parallelize this with intent analysis too!
         image_analysis = _analyze_image(image_data, user_text)
         if image_analysis == "NO_AUTO":
             return "Lo siento, solo puedo analizar imágenes de autos para ayudarte a buscar en el inventario. 🚗"
@@ -544,8 +558,17 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
+    # Launch Vector Search (Optimistic)
+    # We launch it even if intent might be FEEDBACK, to save time if it IS a sales query.
+    search_query = user_text
+    if image_context:
+        search_query += f" {image_context}"
+
+    search_future = _executor.submit(_search_cars, search_query)
+
+    # --- Wait for Results ---
+
+    analysis = intent_future.result()
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
     config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
@@ -564,12 +587,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Retrieve search result (it was running in parallel with intent analysis)
+            inventory_context = search_future.result()
 
             # Construir Prompt RAG
             prompt = (

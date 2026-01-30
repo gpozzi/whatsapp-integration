@@ -18,10 +18,27 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import brain
 import datetime
+from concurrent.futures import ThreadPoolExecutor
+
+class SynchronousExecutor:
+    def submit(self, fn, *args, **kwargs):
+        future = MagicMock()
+        try:
+            result = fn(*args, **kwargs)
+            future.result.return_value = result
+        except Exception as e:
+            future.result.side_effect = e
+        return future
 
 class TestDeduplication(unittest.TestCase):
 
     def setUp(self):
+        # Shutdown the global executor to ensure no background tasks interfere
+        # We need to restart it because other tests might need it (though this test patches it)
+        if hasattr(brain, '_executor'):
+            brain._executor.shutdown(wait=True)
+            brain._executor = ThreadPoolExecutor(max_workers=4)
+
         # Reset Global State in Brain
         brain._db_client = None
         brain._safety_model = None
@@ -71,6 +88,7 @@ class TestDeduplication(unittest.TestCase):
         # 2. RAG Response
         # 3. Safety Check
         # 4. Feedback Decision (Optional)
+        # 5. User Profile Update (Background task triggered at the end)
 
         # We also need to mock _search_cars or ensure it doesn't crash
         # _search_cars calls inventory_vectors.find_nearest().get()
@@ -80,14 +98,20 @@ class TestDeduplication(unittest.TestCase):
             MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
             MagicMock(content="Response Text"), # Sales Agent Response
             MagicMock(content="APROBADO"), # Audit
-            MagicMock(content="NO") # Feedback
+            MagicMock(content="NO"), # Feedback
+            MagicMock(content='{}') # User Profile Update (ignored)
         ]
 
         # Patch _init_services to return our LLM
-        with patch('brain._init_services', return_value=mock_llm_instance):
+        # Also patch _executor to be synchronous to avoid race conditions in tests
+        with patch('brain._init_services', return_value=mock_llm_instance), \
+             patch('brain._executor', new_callable=SynchronousExecutor):
+
             # Manually set _db_client because we bypassed _init_services
             brain._db_client = mock_db
             brain._safety_model = mock_llm_instance # Reuse for simplicity
+            # Fix: Ensure embeddings service is also mocked/set so _search_cars doesn't fail or create new mocks
+            brain._embeddings_service = MagicMock()
 
             response = brain.process_message("Hello", "123456", "msg_new_123")
 
