@@ -4,6 +4,9 @@ import time
 import json
 import base64
 import urllib.parse
+import hmac
+import hashlib
+import secrets
 import gunicorn
 from google.cloud import pubsub_v1
 import config
@@ -21,6 +24,25 @@ except Exception as e:
     publisher = None
 
 # --- Helper Functions (Shared) ---
+
+def verify_signature(payload_body, signature_header, secret):
+    """Verifica la firma HMAC-SHA256 de WhatsApp."""
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+
+    signature = signature_header.split("sha256=")[1]
+
+    # Calcular HMAC
+    try:
+        expected_signature = hmac.new(
+            key=secret.encode('utf-8'),
+            msg=payload_body,
+            digestmod=hashlib.sha256
+        ).hexdigest()
+    except Exception:
+        return False
+
+    return secrets.compare_digest(signature, expected_signature)
 
 def send_whatsapp(phone, text):
     """Envío 'low-level' a la API de WhatsApp."""
@@ -217,6 +239,21 @@ def whatsapp_webhook():
 
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
+        # --- VERIFICACIÓN DE FIRMA ---
+        if config.APP_SECRET:
+            signature = request.headers.get("X-Hub-Signature-256")
+            if signature:
+                if not verify_signature(request.get_data(), signature, config.APP_SECRET):
+                    config.logger.warning("⛔ Security: Invalid webhook signature.")
+                    return "Forbidden", 403
+            else:
+                # Si falta la firma, verificamos si es Pub/Sub (User-Agent confiable en este contexto híbrido)
+                # Si no es Pub/Sub, bloqueamos para evitar spoofing.
+                ua = request.headers.get("User-Agent", "")
+                if "Google-Cloud-PubSub" not in ua:
+                    config.logger.warning("⛔ Security: Missing webhook signature.")
+                    return "Forbidden", 403
+
         try:
             data = request.get_json()
 
