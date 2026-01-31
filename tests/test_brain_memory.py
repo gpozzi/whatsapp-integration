@@ -12,6 +12,8 @@ sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['google.cloud.texttospeech'] = MagicMock()
+sys.modules['langchain_core'] = MagicMock()
+sys.modules['langchain_core.messages'] = MagicMock()
 
 # Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))

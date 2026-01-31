@@ -24,6 +24,7 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -534,7 +535,17 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     # Gestión de Contexto
     history = _manage_history(phone_number)
 
-    # 1. Análisis Multimodal (si hay imagen)
+    # ⚡ Performance: Optimistic Search
+    # Lanzamos el análisis de intención y la búsqueda de autos (si es posible) en paralelo.
+    future_intent = _executor.submit(_analyze_tone_and_intent, user_text, history)
+    future_search = None
+
+    # Si NO hay imagen, podemos buscar ya mismo con el texto del usuario.
+    # Si HAY imagen, debemos esperar al análisis de imagen para enriquecer la búsqueda.
+    if not image_data:
+        future_search = _executor.submit(_search_cars, user_text)
+
+    # 1. Análisis Multimodal (si hay imagen) - Hilo principal (o futuro separado)
     image_context = ""
     if image_data:
         image_analysis = _analyze_image(image_data, user_text)
@@ -544,8 +555,8 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
 
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
+    # 2. Recuperar Resultados de Intención
+    analysis = future_intent.result()
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
     config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
@@ -564,12 +575,15 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recuperar o Ejecutar Búsqueda
+            if future_search:
+                inventory_context = future_search.result()
+            else:
+                # Caso con imagen o si falló el submit (raro): buscamos ahora con contexto completo
+                search_query = user_text
+                if image_context:
+                    search_query += f" {image_context}"
+                inventory_context = _search_cars(search_query)
 
             # Construir Prompt RAG
             prompt = (

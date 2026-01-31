@@ -12,6 +12,8 @@ sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.firestore'] = MagicMock()
 sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
+sys.modules['langchain_core'] = MagicMock()
+sys.modules['langchain_core.messages'] = MagicMock()
 
 # Ensure we can import brain
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -31,8 +33,10 @@ class TestDeduplication(unittest.TestCase):
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
-    def test_deduplication(self, mock_vector_cls, mock_vertex):
+    @patch('brain._manage_history')
+    def test_deduplication(self, mock_manage_history, mock_vector_cls, mock_vertex):
         """Test that duplicate message IDs are handled correctly."""
+        mock_manage_history.return_value = "History context"
 
         # Configure the Firestore Mock we injected in setUp
         mock_db = MagicMock()
