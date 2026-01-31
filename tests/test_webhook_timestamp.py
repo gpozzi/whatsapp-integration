@@ -26,6 +26,7 @@ sys.modules['config'].PHONE_NUMBER_ID = "123"
 sys.modules['config'].WHATSAPP_TOKEN = "abc"
 sys.modules['config'].VERIFY_TOKEN = "verify"
 sys.modules['config'].PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
+sys.modules['config'].APP_SECRET = None
 sys.modules['config'].logger = MagicMock()
 
 # Mock PubSub
@@ -45,6 +46,8 @@ class TestMainTimestamp(unittest.TestCase):
     def setUp(self):
         # Reload main to ensure it uses the mocked configuration
         importlib.reload(main)
+        # Explicitly disable security for timestamp tests
+        main.config.APP_SECRET = None
 
         # Force publisher to be a fresh MagicMock to ensure isolation between tests
         main.publisher = MagicMock()
