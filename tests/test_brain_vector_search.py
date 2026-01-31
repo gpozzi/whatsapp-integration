@@ -1,6 +1,18 @@
 import unittest
 from unittest.mock import MagicMock, patch, ANY
 import sys
+
+# Mock dependencies before importing brain
+sys.modules['google'] = MagicMock()
+sys.modules['google.auth'] = MagicMock()
+sys.modules['google.cloud'] = MagicMock()
+sys.modules['google.cloud.firestore'] = MagicMock()
+sys.modules['google.cloud.texttospeech'] = MagicMock()
+sys.modules['google.cloud.pubsub_v1'] = MagicMock()
+sys.modules['langchain_google_vertexai'] = MagicMock()
+sys.modules['langchain_core'] = MagicMock()
+sys.modules['langchain_core.messages'] = MagicMock()
+
 import brain
 import config
 
@@ -26,6 +38,16 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.mock_chat_vertex_ai_cls = self.patcher_chat_vertex_ai.start()
         self.mock_vertex_embeddings_cls = self.patcher_vertex_embeddings.start()
 
+        # Patch executor
+        self.patcher_executor = patch('brain._executor')
+        self.mock_executor = self.patcher_executor.start()
+        # Mock executor to run synchronously
+        def side_effect_submit(func, *args, **kwargs):
+             future = MagicMock()
+             future.result.return_value = func(*args, **kwargs)
+             return future
+        self.mock_executor.submit.side_effect = side_effect_submit
+
         # Configure ChatVertexAI mock to return different models based on model_name
         def side_effect_chat(*args, **kwargs):
             if kwargs.get('model_name') == brain.MODEL_SALES:
@@ -40,6 +62,7 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.patcher_firestore.stop()
         self.patcher_chat_vertex_ai.stop()
         self.patcher_vertex_embeddings.stop()
+        self.patcher_executor.stop()
 
     def test_search_cars(self):
         # Setup Vector Search Mock

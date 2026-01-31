@@ -17,6 +17,8 @@ sys.modules["google.cloud.texttospeech"] = mock_texttospeech
 sys.modules["langchain_google_vertexai"] = mock_vertexai
 sys.modules["google.auth"] = mock_google_auth
 sys.modules["googleapiclient.discovery"] = mock_discovery
+sys.modules["langchain_core"] = MagicMock()
+sys.modules["langchain_core.messages"] = MagicMock()
 
 import brain
 import config

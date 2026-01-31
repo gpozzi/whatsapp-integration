@@ -24,8 +24,11 @@ sys.modules['config'].logger = MagicMock()
 
 # Mock PubSub
 mock_pubsub = MagicMock()
+sys.modules['google'] = MagicMock()
 sys.modules['google.cloud'] = MagicMock()
 sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
+sys.modules['google.cloud.firestore'] = MagicMock()
+sys.modules['google.cloud.texttospeech'] = MagicMock()
 
 # Mock heavy deps
 sys.modules['langchain_google_vertexai'] = MagicMock()

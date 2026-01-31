@@ -19,6 +19,8 @@ sys.modules["google.cloud.texttospeech"] = mock_texttospeech
 sys.modules["langchain_google_vertexai"] = mock_vertexai
 sys.modules["google.auth"] = mock_google_auth
 sys.modules["googleapiclient.discovery"] = mock_discovery
+sys.modules["langchain_core"] = MagicMock()
+sys.modules["langchain_core.messages"] = MagicMock()
 
 import brain
 import config
@@ -112,8 +114,16 @@ class TestAudioFeatures(unittest.TestCase):
 
     @patch('brain.HumanMessage')
     @patch('brain.ChatVertexAI') # Patch LLM constructor
-    def test_process_message_audio_flow(self, mock_llm_constructor, mock_human_message):
+    @patch('brain._executor')
+    def test_process_message_audio_flow(self, mock_executor, mock_llm_constructor, mock_human_message):
         # Setup
+        # Configure executor mock to execute submitted functions immediately (synchronously)
+        def side_effect_submit(func, *args, **kwargs):
+             future = MagicMock()
+             future.result.return_value = func(*args, **kwargs)
+             return future
+        mock_executor.submit.side_effect = side_effect_submit
+
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent
@@ -160,7 +170,15 @@ class TestAudioFeatures(unittest.TestCase):
 
     @patch('brain.HumanMessage')
     @patch('brain.ChatVertexAI')
-    def test_process_message_text_fallback(self, mock_llm_constructor, mock_human_message):
+    @patch('brain._executor')
+    def test_process_message_text_fallback(self, mock_executor, mock_llm_constructor, mock_human_message):
+        # Configure executor mock
+        def side_effect_submit(func, *args, **kwargs):
+             future = MagicMock()
+             future.result.return_value = func(*args, **kwargs)
+             return future
+        mock_executor.submit.side_effect = side_effect_submit
+
         original_analyze = brain._analyze_audio
         original_tts = brain._text_to_speech
         original_tone = brain._analyze_tone_and_intent

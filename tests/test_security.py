@@ -14,7 +14,6 @@ sys.modules['langchain_google_vertexai'] = MagicMock()
 sys.modules['langchain_experimental.agents'] = MagicMock()
 # Mock module where PythonAstREPLTool resides
 sys.modules['functions_framework'] = MagicMock()
-# sys.modules['requests'] = MagicMock() # DO NOT mock requests if we want to test import validity
 
 # Ensure functions_framework.http decorator works
 sys.modules['functions_framework'].http = lambda f: f
