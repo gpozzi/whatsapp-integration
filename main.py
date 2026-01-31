@@ -4,6 +4,9 @@ import time
 import json
 import base64
 import urllib.parse
+import hmac
+import hashlib
+import secrets
 import gunicorn
 from google.cloud import pubsub_v1
 import config
@@ -21,6 +24,27 @@ except Exception as e:
     publisher = None
 
 # --- Helper Functions (Shared) ---
+
+def verify_signature(payload, signature, secret):
+    """
+    Verifies the X-Hub-Signature-256 header.
+    Payload must be the raw request body.
+    """
+    if not signature:
+        return False
+
+    # Signature format: sha256=hash
+    parts = signature.split('=')
+    if len(parts) != 2 or parts[0] != 'sha256':
+        return False
+
+    expected_hash = hmac.new(
+        secret.encode('utf-8'),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+
+    return secrets.compare_digest(parts[1], expected_hash)
 
 def send_whatsapp(phone, text):
     """Envío 'low-level' a la API de WhatsApp."""
@@ -218,6 +242,15 @@ def whatsapp_webhook():
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
         try:
+            # 0. Signature Verification (Check but defer enforcement)
+            signature_error = None
+            if config.APP_SECRET:
+                signature = request.headers.get('X-Hub-Signature-256')
+                if not signature:
+                    signature_error = "Missing Signature"
+                elif not verify_signature(request.get_data(), signature, config.APP_SECRET):
+                    signature_error = "Invalid Signature"
+
             data = request.get_json()
 
             # --- NUEVA LÓGICA PARA PUB/SUB ---
@@ -237,10 +270,19 @@ def whatsapp_webhook():
 
                     # Si no es nuestro formato, quizás sea raw (poco probable, pero por seguridad)
                     data = payload
+
+                    # Trust the Pub/Sub envelope (bypass signature enforcement for extracted payload)
+                    signature_error = None
                 except Exception as e:
                     config.logger.error(f"Error abriendo mensaje de Pub/Sub: {e}")
                     return "Bad Request", 400
             # ---------------------------------
+
+            # --- LÓGICA WHATSAPP ---
+            # Enforce Signature Verification now
+            if signature_error:
+                 config.logger.warning(f"⛔ {signature_error} on Webhook Request")
+                 return "Forbidden", 403
 
             # Lógica original para mensajes directos de WhatsApp
             entries = data.get('entry', [])
