@@ -4,6 +4,9 @@ import time
 import json
 import base64
 import urllib.parse
+import hmac
+import hashlib
+import secrets
 import gunicorn
 from google.cloud import pubsub_v1
 import config
@@ -218,11 +221,33 @@ def whatsapp_webhook():
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
         try:
-            data = request.get_json()
+            # Security: Verify Signature
+            # We need raw data for HMAC verification
+            raw_data = request.get_data()
+            data = request.get_json(silent=True) or {}
+
+            # Check for Pub/Sub structure (Bypass HMAC for internal Google messages)
+            is_pubsub = data and 'message' in data and 'data' in data['message']
+
+            if not is_pubsub and config.APP_SECRET:
+                signature = request.headers.get('X-Hub-Signature-256')
+                if not signature:
+                    config.logger.warning("Security: Missing X-Hub-Signature-256")
+                    return "Forbidden", 403
+
+                expected_signature = "sha256=" + hmac.new(
+                    config.APP_SECRET.encode('utf-8'),
+                    msg=raw_data,
+                    digestmod=hashlib.sha256
+                ).hexdigest()
+
+                if not secrets.compare_digest(signature, expected_signature):
+                    config.logger.warning("Security: Invalid X-Hub-Signature-256")
+                    return "Forbidden", 403
 
             # --- NUEVA LÓGICA PARA PUB/SUB ---
             # Si el mensaje viene de Google Pub/Sub (la caja)
-            if data and 'message' in data and 'data' in data['message']:
+            if is_pubsub:
                 try:
                     # 1. Abrimos la caja
                     decoded_data = base64.b64decode(data['message']['data']).decode('utf-8')
