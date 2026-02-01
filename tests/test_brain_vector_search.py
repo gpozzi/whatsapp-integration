@@ -21,10 +21,20 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.patcher_firestore = patch('brain.firestore.Client', return_value=self.mock_firestore_client)
         self.patcher_chat_vertex_ai = patch('brain.ChatVertexAI')
         self.patcher_vertex_embeddings = patch('brain.VertexAIEmbeddings', return_value=self.mock_embeddings_service)
+        self.patcher_executor = patch('brain._executor')
 
         self.mock_firestore_cls = self.patcher_firestore.start()
         self.mock_chat_vertex_ai_cls = self.patcher_chat_vertex_ai.start()
         self.mock_vertex_embeddings_cls = self.patcher_vertex_embeddings.start()
+        self.mock_executor = self.patcher_executor.start()
+
+        # Configure Executor to run tasks synchronously
+        def submit_side_effect(fn, *args, **kwargs):
+            result = fn(*args, **kwargs)
+            future = MagicMock()
+            future.result.return_value = result
+            return future
+        self.mock_executor.submit.side_effect = submit_side_effect
 
         # Configure ChatVertexAI mock to return different models based on model_name
         def side_effect_chat(*args, **kwargs):
@@ -40,6 +50,7 @@ class TestBrainVectorSearch(unittest.TestCase):
         self.patcher_firestore.stop()
         self.patcher_chat_vertex_ai.stop()
         self.patcher_vertex_embeddings.stop()
+        self.patcher_executor.stop()
 
     def test_search_cars(self):
         # Setup Vector Search Mock

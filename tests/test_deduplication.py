@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 
 # --- MOCK DEPENDENCIES BEFORE IMPORTING BRAIN ---
 sys.modules['google'] = MagicMock()
@@ -18,6 +19,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import brain
 import datetime
+
+class SynchronousExecutor(ThreadPoolExecutor):
+    """Executor that runs submitted tasks immediately in the current thread."""
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def submit(self, fn, *args, **kwargs):
+        future = Future()
+        try:
+            result = fn(*args, **kwargs)
+            future.set_result(result)
+        except Exception as e:
+            future.set_exception(e)
+        return future
+
+    def shutdown(self, wait=True):
+        pass
 
 class TestDeduplication(unittest.TestCase):
 
@@ -84,7 +102,10 @@ class TestDeduplication(unittest.TestCase):
         ]
 
         # Patch _init_services to return our LLM
-        with patch('brain._init_services', return_value=mock_llm_instance):
+        # Patch _executor to be synchronous
+        with patch('brain._init_services', return_value=mock_llm_instance), \
+             patch('brain._executor', new=SynchronousExecutor()):
+
             # Manually set _db_client because we bypassed _init_services
             brain._db_client = mock_db
             brain._safety_model = mock_llm_instance # Reuse for simplicity
@@ -100,7 +121,10 @@ class TestDeduplication(unittest.TestCase):
         mock_processed_doc.set.reset_mock()
         mock_processed_doc.get.return_value.exists = True # Document exists
 
-        response = brain.process_message("Hello Again", "123456", "msg_existing_123")
+        # For the duplicate case, executor shouldn't matter as it returns early,
+        # but good to keep it consistent or clean.
+        with patch('brain._executor', new=SynchronousExecutor()):
+             response = brain.process_message("Hello Again", "123456", "msg_existing_123")
 
         # Verification
         self.assertIsNone(response)
