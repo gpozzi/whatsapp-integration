@@ -18,6 +18,18 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import brain
 import datetime
+from concurrent.futures import Future
+
+class SynchronousExecutor:
+    """Helper to run tasks immediately in the main thread for testing."""
+    def submit(self, fn, *args, **kwargs):
+        f = Future()
+        try:
+            result = fn(*args, **kwargs)
+            f.set_result(result)
+        except Exception as e:
+            f.set_exception(e)
+        return f
 
 class TestDeduplication(unittest.TestCase):
 
@@ -29,9 +41,10 @@ class TestDeduplication(unittest.TestCase):
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
 
+    @patch('brain._executor', new_callable=lambda: SynchronousExecutor())
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
-    def test_deduplication(self, mock_vector_cls, mock_vertex):
+    def test_deduplication(self, mock_executor, mock_vertex, mock_vector_cls):
         """Test that duplicate message IDs are handled correctly."""
 
         # Configure the Firestore Mock we injected in setUp
@@ -63,31 +76,43 @@ class TestDeduplication(unittest.TestCase):
         mock_processed_doc.get.return_value.exists = False # Document doesn't exist
 
         # Mock LLM instances
-        mock_llm_instance = MagicMock()
-        mock_vertex.return_value = mock_llm_instance
+        mock_sales = MagicMock()
+        mock_safety = MagicMock()
+
+        # mock_vertex is the class. When instantiated, it should return...
+        # But here we separate them. _init_services returns mock_sales.
+        # We manually set _safety_model to mock_safety.
+
+        mock_vertex.return_value = mock_sales # Fallback
 
         # Mock responses
-        # 1. Intent/Tone analysis
-        # 2. RAG Response
-        # 3. Safety Check
-        # 4. Feedback Decision (Optional)
+        # Sales Agent Response
+        mock_sales.invoke.return_value = MagicMock(content="Response Text")
+
+        # Safety Model Responses (Dynamic to handle potential thread pollution)
+        def safety_side_effect(input_arg):
+            prompt = str(input_arg)
+            if "CATEGORÍA" in prompt:
+                return MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO")
+            elif "Oficial de Seguridad" in prompt:
+                return MagicMock(content="APROBADO")
+            elif "Te sirvió esta info" in prompt:
+                return MagicMock(content="NO")
+            elif "Analiza esta conversación" in prompt: # Profile update (possibly phantom)
+                return MagicMock(content='{}')
+            return MagicMock(content="UNKNOWN")
+
+        mock_safety.invoke.side_effect = safety_side_effect
 
         # We also need to mock _search_cars or ensure it doesn't crash
         # _search_cars calls inventory_vectors.find_nearest().get()
         mock_vectors_coll.find_nearest.return_value.get.return_value = [] # No results, fine
 
-        mock_llm_instance.invoke.side_effect = [
-            MagicMock(content="CATEGORY: SALES_QUERY | TONE: DIRECTO"), # Intent
-            MagicMock(content="Response Text"), # Sales Agent Response
-            MagicMock(content="APROBADO"), # Audit
-            MagicMock(content="NO") # Feedback
-        ]
-
-        # Patch _init_services to return our LLM
-        with patch('brain._init_services', return_value=mock_llm_instance):
+        # Patch _init_services to return our Sales LLM
+        with patch('brain._init_services', return_value=mock_sales):
             # Manually set _db_client because we bypassed _init_services
             brain._db_client = mock_db
-            brain._safety_model = mock_llm_instance # Reuse for simplicity
+            brain._safety_model = mock_safety # Distinct mock for safety/intent
 
             response = brain.process_message("Hello", "123456", "msg_new_123")
 
