@@ -4,6 +4,9 @@ import time
 import json
 import base64
 import urllib.parse
+import hmac
+import hashlib
+import secrets
 import gunicorn
 from google.cloud import pubsub_v1
 import config
@@ -21,6 +24,16 @@ except Exception as e:
     publisher = None
 
 # --- Helper Functions (Shared) ---
+
+def verify_signature(payload, signature, secret):
+    """Verifica la firma HMAC SHA256 de WhatsApp."""
+    try:
+        if not signature.startswith("sha256="):
+            return False
+        expected = 'sha256=' + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return secrets.compare_digest(signature, expected)
+    except Exception:
+        return False
 
 def send_whatsapp(phone, text):
     """Envío 'low-level' a la API de WhatsApp."""
@@ -241,6 +254,19 @@ def whatsapp_webhook():
                     config.logger.error(f"Error abriendo mensaje de Pub/Sub: {e}")
                     return "Bad Request", 400
             # ---------------------------------
+
+            # --- SEGURIDAD: VERIFICACIÓN DE FIRMA WHATSAPP ---
+            if config.APP_SECRET:
+                signature = request.headers.get('X-Hub-Signature-256')
+                if not signature:
+                     config.logger.warning("⛔ Seguridad: Falta firma X-Hub-Signature-256 en Webhook")
+                     return "Forbidden", 403
+
+                # Usamos request.get_data() para obtener los bytes crudos
+                if not verify_signature(request.get_data(), signature, config.APP_SECRET):
+                     config.logger.warning("⛔ Seguridad: Firma inválida en Webhook")
+                     return "Forbidden", 403
+            # -----------------------------------------------
 
             # Lógica original para mensajes directos de WhatsApp
             entries = data.get('entry', [])
