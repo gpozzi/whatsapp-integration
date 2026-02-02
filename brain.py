@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage
 import config
 
 # --- ESTADO GLOBAL ---
+_executor = ThreadPoolExecutor(max_workers=4)
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
@@ -534,21 +535,39 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
     # Gestión de Contexto
     history = _manage_history(phone_number)
 
-    # 1. Análisis Multimodal (si hay imagen)
-    image_context = ""
+    # ⚡ Performance: Parallel Execution Start
+    # Launch independent tasks concurrently to reduce latency
+
+    # Task A: Intent Analysis (Always run)
+    future_intent = _executor.submit(_analyze_tone_and_intent, user_text, history)
+
+    # Task B: Image Analysis (Run if image present)
+    future_image = None
     if image_data:
-        image_analysis = _analyze_image(image_data, user_text)
+        future_image = _executor.submit(_analyze_image, image_data, user_text)
+
+    # Task C: Optimistic Search (Run ONLY if no image, as image analysis is needed for search query)
+    future_search = None
+    if not image_data:
+        future_search = _executor.submit(_search_cars, user_text)
+
+    # --- Retrieve Results & Synchronize ---
+
+    # 1. Intent Result
+    analysis = future_intent.result()
+    intent = analysis["intent"]
+    style_instruction = analysis["style_instruction"]
+    config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
+
+    # 2. Image Result (if applicable)
+    image_context = ""
+    if future_image:
+        image_analysis = future_image.result()
         if image_analysis == "NO_AUTO":
             return "Lo siento, solo puedo analizar imágenes de autos para ayudarte a buscar en el inventario. 🚗"
         elif image_analysis != "ERROR_IMAGE":
             image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
             config.logger.info(f"Imagen analizada: {image_analysis}")
-
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
-    intent = analysis["intent"]
-    style_instruction = analysis["style_instruction"]
-    config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
 
     try:
         final_text = ""
@@ -564,12 +583,15 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Retrieve or Execute Search
+            if future_search:
+                inventory_context = future_search.result()
+            else:
+                # If we had an image, we waited for analysis. Now we search with full context.
+                search_query = user_text
+                if image_context:
+                    search_query += f" {image_context}"
+                inventory_context = _search_cars(search_query)
 
             # Construir Prompt RAG
             prompt = (
