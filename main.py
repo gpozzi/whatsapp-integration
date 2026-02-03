@@ -5,6 +5,9 @@ import json
 import base64
 import urllib.parse
 import gunicorn
+import hmac
+import hashlib
+import secrets
 from google.cloud import pubsub_v1
 import config
 import brain
@@ -218,6 +221,28 @@ def whatsapp_webhook():
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
         try:
+            # --- SECURITY: HMAC Verification ---
+            if config.APP_SECRET:
+                signature = request.headers.get("X-Hub-Signature-256")
+                if signature:
+                    signature = signature.replace("sha256=", "")
+                    expected_signature = hmac.new(
+                        config.APP_SECRET.encode("utf-8"),
+                        request.get_data(),
+                        hashlib.sha256
+                    ).hexdigest()
+                    if not secrets.compare_digest(signature, expected_signature):
+                        config.logger.warning("⛔ Security: Invalid WhatsApp Signature")
+                        return "Forbidden", 403
+                else:
+                    # Signature missing: Check if it's a Pub/Sub message
+                    data = request.get_json()
+                    is_pubsub = data and 'message' in data and 'data' in data['message']
+
+                    if not is_pubsub:
+                        config.logger.warning("⛔ Security: Missing WhatsApp Signature")
+                        return "Forbidden", 403
+
             data = request.get_json()
 
             # --- NUEVA LÓGICA PARA PUB/SUB ---
