@@ -10,38 +10,50 @@ import importlib
 # Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Mock modules
-mock_ff = MagicMock()
-mock_ff.http.side_effect = lambda f: f
-sys.modules['functions_framework'] = mock_ff
-
-sys.modules['config'] = MagicMock()
-sys.modules['config'].PHONE_NUMBER_ID = "123"
-sys.modules['config'].WHATSAPP_TOKEN = "abc"
-sys.modules['config'].VERIFY_TOKEN = "verify"
-sys.modules['config'].PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
-sys.modules['config'].logger = MagicMock()
-
-# Mock PubSub
-mock_pubsub = MagicMock()
-sys.modules['google.cloud'] = MagicMock()
-sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
-
-# Mock heavy deps
-sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['google.auth'] = MagicMock()
-sys.modules['googleapiclient'] = MagicMock()
-sys.modules['googleapiclient.discovery'] = MagicMock()
-
-import main
-
 class TestWorkerRoute(unittest.TestCase):
     def setUp(self):
-        # Reload main to ensure it uses the mocked configuration
+        self._original_modules = sys.modules.copy()
+
+        # Mock modules
+        mock_ff = MagicMock()
+        mock_ff.http.side_effect = lambda f: f
+        sys.modules['functions_framework'] = mock_ff
+
+        mock_config = MagicMock()
+        mock_config.PHONE_NUMBER_ID = "123"
+        mock_config.WHATSAPP_TOKEN = "abc"
+        mock_config.VERIFY_TOKEN = "verify"
+        mock_config.PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
+        mock_config.logger = MagicMock()
+        sys.modules['config'] = mock_config
+
+        # Mock PubSub
+        mock_pubsub = MagicMock()
+        sys.modules['google.cloud'] = MagicMock()
+        sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
+
+        # Mock heavy deps
+        sys.modules['langchain_google_vertexai'] = MagicMock()
+        sys.modules['google.auth'] = MagicMock()
+        sys.modules['googleapiclient'] = MagicMock()
+        sys.modules['googleapiclient.discovery'] = MagicMock()
+
+        # Now import main
+        import main
         importlib.reload(main)
+        self.main = main
 
         # Setup Flask test client
-        self.client = main.app.test_client()
+        self.client = self.main.app.test_client()
+
+    def tearDown(self):
+        sys.modules.clear()
+        sys.modules.update(self._original_modules)
+        try:
+            import main
+            importlib.reload(main)
+        except ImportError:
+            pass
 
     @patch('main._process_message_logic')
     def test_worker_processed(self, mock_process):

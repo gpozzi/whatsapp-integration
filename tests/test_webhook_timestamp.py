@@ -10,50 +10,58 @@ import importlib
 # Add root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Mock modules
-mock_ff = MagicMock()
-mock_ff.http.side_effect = lambda f: f
-sys.modules['functions_framework'] = mock_ff
-
-# CAUTION: We should not mock 'requests' entire package if libraries need it.
-# Instead of mocking requests, we can patch it inside the test methods if needed.
-# But main.py imports requests.
-# If we mock sys.modules['requests'], it breaks other libs like requests_toolbelt.
-# So we remove: sys.modules['requests'] = MagicMock()
-
-sys.modules['config'] = MagicMock()
-sys.modules['config'].PHONE_NUMBER_ID = "123"
-sys.modules['config'].WHATSAPP_TOKEN = "abc"
-sys.modules['config'].VERIFY_TOKEN = "verify"
-sys.modules['config'].PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
-sys.modules['config'].logger = MagicMock()
-
-# Mock PubSub
-mock_pubsub = MagicMock()
-sys.modules['google.cloud'] = MagicMock()
-sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
-
-# Mock heavy deps
-sys.modules['langchain_google_vertexai'] = MagicMock()
-sys.modules['google.auth'] = MagicMock()
-sys.modules['googleapiclient'] = MagicMock()
-sys.modules['googleapiclient.discovery'] = MagicMock()
-
-import main
-
 class TestMainTimestamp(unittest.TestCase):
     def setUp(self):
-        # Reload main to ensure it uses the mocked configuration
+        self._original_modules = sys.modules.copy()
+
+        # Mock modules
+        sys.modules['functions_framework'] = MagicMock()
+
+        # Mock config
+        mock_config = MagicMock()
+        mock_config.PHONE_NUMBER_ID = "123"
+        mock_config.WHATSAPP_TOKEN = "abc"
+        mock_config.VERIFY_TOKEN = "verify"
+        mock_config.PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
+        mock_config.logger = MagicMock()
+        sys.modules['config'] = mock_config
+
+        # Mock PubSub
+        mock_pubsub = MagicMock()
+        sys.modules['google.cloud'] = MagicMock()
+        sys.modules['google.cloud.pubsub_v1'] = mock_pubsub
+
+        # Mock heavy deps
+        sys.modules['langchain_google_vertexai'] = MagicMock()
+        sys.modules['google.auth'] = MagicMock()
+        sys.modules['googleapiclient'] = MagicMock()
+        sys.modules['googleapiclient.discovery'] = MagicMock()
+
+        # Now import main
+        import main
         importlib.reload(main)
+        self.main = main
 
         # Force publisher to be a fresh MagicMock to ensure isolation between tests
-        main.publisher = MagicMock()
+        self.main.publisher = MagicMock()
 
         # Mock brain inside main instance
-        main.brain = MagicMock()
+        self.main.brain = MagicMock()
 
         # Setup Flask test client
-        self.client = main.app.test_client()
+        self.client = self.main.app.test_client()
+
+    def tearDown(self):
+        # Restore sys.modules
+        sys.modules.clear()
+        sys.modules.update(self._original_modules)
+
+        # Reload main
+        try:
+            import main
+            importlib.reload(main)
+        except ImportError:
+            pass
 
     def test_old_message_ignored(self):
         # Setup
@@ -85,8 +93,8 @@ class TestMainTimestamp(unittest.TestCase):
         self.assertEqual(response.data.decode('utf-8'), "OK")
 
         # Should NOT call publisher.publish
-        if main.publisher:
-            main.publisher.publish.assert_not_called()
+        if self.main.publisher:
+            self.main.publisher.publish.assert_not_called()
 
     def test_new_message_processed(self):
         # Setup
@@ -110,9 +118,9 @@ class TestMainTimestamp(unittest.TestCase):
         }
 
         # Mock publisher future result
-        if main.publisher:
+        if self.main.publisher:
             future_mock = MagicMock()
-            main.publisher.publish.return_value = future_mock
+            self.main.publisher.publish.return_value = future_mock
             future_mock.result.return_value = "msg_id"
 
         # Act
@@ -123,8 +131,8 @@ class TestMainTimestamp(unittest.TestCase):
         self.assertEqual(response.data.decode('utf-8'), "OK")
 
         # Verify publish was called
-        if main.publisher:
-             main.publisher.publish.assert_called()
+        if self.main.publisher:
+             self.main.publisher.publish.assert_called()
         else:
             self.fail("Publisher should be initialized")
 
