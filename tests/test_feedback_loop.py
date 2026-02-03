@@ -4,6 +4,7 @@ import sys
 import brain
 import config
 from google.cloud import firestore
+import concurrent.futures
 
 class TestFeedbackLoop(unittest.TestCase):
     def setUp(self):
@@ -14,6 +15,23 @@ class TestFeedbackLoop(unittest.TestCase):
         brain._check_is_duplicate = MagicMock(return_value=False)
         brain._manage_history = MagicMock(return_value="User: Hello\nBot: Hi")
         brain._audit_response = MagicMock(return_value=True)
+
+        # Patch Executor to be Synchronous for predictable testing
+        class SynchronousExecutor:
+            def submit(self, fn, *args, **kwargs):
+                future = concurrent.futures.Future()
+                try:
+                    result = fn(*args, **kwargs)
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+                return future
+
+        self.patcher_executor = patch("brain._executor", new=SynchronousExecutor())
+        self.patcher_executor.start()
+
+    def tearDown(self):
+        self.patcher_executor.stop()
 
     def test_classify_intent_positive_feedback(self):
         """Test that _analyze_tone_and_intent correctly identifies positive feedback."""
@@ -89,8 +107,10 @@ class TestFeedbackLoop(unittest.TestCase):
         ]
 
         # Patch dependencies
+        # Also patch _search_cars because optimistic search will trigger it, and we want to avoid side effects or crashes
         with patch("brain._init_services", return_value=mock_llm_instance), \
-             patch("brain._manage_history", return_value="Historial"):
+             patch("brain._manage_history", return_value="Historial"), \
+             patch("brain._search_cars", return_value="Ignored"):
 
             # Inject mocks into brain
             brain._safety_model = mock_llm_instance

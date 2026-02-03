@@ -24,6 +24,8 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+# ⚡ Performance: Ejecutor global para tareas paralelas (RAG + Análisis)
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -531,21 +533,56 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         if not user_text:
             return None # Audio ininteligible o vacío
 
-    # Gestión de Contexto
-    history = _manage_history(phone_number)
+    # ⚡ Performance: Parallel Execution Block
+    # Iniciamos tareas independientes en paralelo para reducir latencia.
 
-    # 1. Análisis Multimodal (si hay imagen)
-    image_context = ""
+    # 1. Gestión de Contexto (Lectura Firestore)
+    future_history = _executor.submit(_manage_history, phone_number)
+
+    future_image_analysis = None
+    future_search = None
+
     if image_data:
-        image_analysis = _analyze_image(image_data, user_text)
-        if image_analysis == "NO_AUTO":
-            return "Lo siento, solo puedo analizar imágenes de autos para ayudarte a buscar en el inventario. 🚗"
-        elif image_analysis != "ERROR_IMAGE":
-            image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis}]"
-            config.logger.info(f"Imagen analizada: {image_analysis}")
+        # Si hay imagen, analizamos imagen en paralelo con historial
+        future_image_analysis = _executor.submit(_analyze_image, image_data, user_text)
+    else:
+        # Si NO hay imagen, iniciamos búsqueda vectorial "Optimista" con texto usuario
+        # Asumimos que la intención será SALES_QUERY (caso más común)
+        future_search = _executor.submit(_search_cars, user_text)
 
-    # 2. Análisis de Intención y Tono
-    analysis = _analyze_tone_and_intent(user_text, history)
+    # ---------------------------------------------------------
+    # Convergencia 1: Historial necesario para Intención
+    # ---------------------------------------------------------
+    history = future_history.result()
+
+    # 2. Análisis de Intención (LLM) - Requiere Historial
+    # Lo lanzamos lo antes posible
+    future_intent = _executor.submit(_analyze_tone_and_intent, user_text, history)
+
+    # ---------------------------------------------------------
+    # Convergencia 2: Preparación de Search Context
+    # ---------------------------------------------------------
+    image_context = ""
+    image_analysis_text = None
+
+    if future_image_analysis:
+        # Esperamos análisis de imagen para decidir si buscar
+        image_analysis_text = future_image_analysis.result()
+
+        if image_analysis_text == "NO_AUTO":
+            return "Lo siento, solo puedo analizar imágenes de autos para ayudarte a buscar en el inventario. 🚗"
+        elif image_analysis_text != "ERROR_IMAGE":
+            image_context = f"\n[INFO IMAGEN: El usuario envió una foto. Análisis: {image_analysis_text}]"
+            config.logger.info(f"Imagen analizada: {image_analysis_text}")
+
+            # Ahora que tenemos contexto de imagen, lanzamos la búsqueda (tardía)
+            search_query = f"{user_text} {image_context}"
+            future_search = _executor.submit(_search_cars, search_query)
+
+    # ---------------------------------------------------------
+    # Convergencia 3: Resultados finales
+    # ---------------------------------------------------------
+    analysis = future_intent.result()
     intent = analysis["intent"]
     style_instruction = analysis["style_instruction"]
     config.logger.info(f"Intención: {intent} | Estilo: {style_instruction}")
@@ -564,12 +601,14 @@ def process_message(user_text: str, phone_number: str, message_id: Optional[str]
         else:
             # 5. Flujo Normal (RAG con Vector Search)
 
-            # Buscar información relevante en el inventario
-            search_query = user_text
-            if image_context:
-                search_query += f" {image_context}"
-
-            inventory_context = _search_cars(search_query)
+            # Recuperamos resultado de búsqueda (ya sea optimista o tardía)
+            # Si search falló o no se lanzó (improbable aquí), manejamos error
+            inventory_context = ""
+            if future_search:
+                inventory_context = future_search.result()
+            else:
+                 # Fallback seguro
+                 inventory_context = _search_cars(user_text)
 
             # Construir Prompt RAG
             prompt = (

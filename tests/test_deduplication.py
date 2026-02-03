@@ -18,16 +18,43 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import brain
 import datetime
+import concurrent.futures
+import importlib
 
 class TestDeduplication(unittest.TestCase):
 
     def setUp(self):
+        # Ensure clean brain state
+        importlib.reload(brain)
+
         # Reset Global State in Brain
         brain._db_client = None
         brain._safety_model = None
 
         # Explicitly overwrite brain.firestore with a fresh Mock
         brain.firestore = MagicMock()
+
+        # Patch Executor to be Synchronous
+        class SynchronousExecutor:
+            def submit(self, fn, *args, **kwargs):
+                future = concurrent.futures.Future()
+                try:
+                    result = fn(*args, **kwargs)
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+                return future
+
+        self.patcher_executor = patch("brain._executor", new=SynchronousExecutor())
+        self.patcher_executor.start()
+
+        # Patch _update_user_profile to prevent it from consuming the shared mock LLM
+        self.patcher_profile = patch("brain._update_user_profile")
+        self.mock_update_profile = self.patcher_profile.start()
+
+    def tearDown(self):
+        self.patcher_executor.stop()
+        self.patcher_profile.stop()
 
     @patch('brain.ChatVertexAI')
     @patch('brain.Vector')
@@ -88,6 +115,12 @@ class TestDeduplication(unittest.TestCase):
             # Manually set _db_client because we bypassed _init_services
             brain._db_client = mock_db
             brain._safety_model = mock_llm_instance # Reuse for simplicity
+
+            # Ensure timestamp logic doesn't crash
+            mock_history_doc.to_dict.return_value = {
+                'mensajes': [],
+                'timestamp': datetime.datetime.now(datetime.timezone.utc)
+            }
 
             response = brain.process_message("Hello", "123456", "msg_new_123")
 
