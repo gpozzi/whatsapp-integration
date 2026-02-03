@@ -7,3 +7,8 @@
 **Vulnerability:** The `download_media` function blindly sent the `Authorization` header to any URL it was given. An attacker could potentially manipulate input to trigger a request to an external server (or internal resource) and capture the credentials (SSRF).
 **Learning:** `requests` automatically handles redirects, but if the initial URL is not validated, or if code blindly trusts a URL param, it can be abused. Additionally, checking for domain suffixes (e.g. `endswith('facebook.com')`) is insufficient as it allows domains like `evilfacebook.com`.
 **Prevention:** Explicitly validate URL schemes (`https`) and allowlist trusted domains using exact matches or proper subdomain checks (`.example.com`).
+
+## 2026-02-03 - [Missing Webhook Signature Verification]
+**Vulnerability:** The WhatsApp webhook endpoint processed POST requests without verifying the `X-Hub-Signature-256` header, allowing attackers to forge messages.
+**Learning:** Shared endpoints (handling both Webhooks and Pub/Sub) can complicate security logic, leading developers to skip verification to avoid breaking compatibility.
+**Prevention:** Implement conditional verification logic: Enforce signature checks for the primary service (WhatsApp) and explicitly validate the structure/auth of the secondary service (Pub/Sub) before bypassing.

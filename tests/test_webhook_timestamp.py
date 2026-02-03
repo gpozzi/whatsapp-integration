@@ -21,12 +21,7 @@ sys.modules['functions_framework'] = mock_ff
 # If we mock sys.modules['requests'], it breaks other libs like requests_toolbelt.
 # So we remove: sys.modules['requests'] = MagicMock()
 
-sys.modules['config'] = MagicMock()
-sys.modules['config'].PHONE_NUMBER_ID = "123"
-sys.modules['config'].WHATSAPP_TOKEN = "abc"
-sys.modules['config'].VERIFY_TOKEN = "verify"
-sys.modules['config'].PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
-sys.modules['config'].logger = MagicMock()
+# config mock moved to setUp
 
 # Mock PubSub
 mock_pubsub = MagicMock()
@@ -43,6 +38,18 @@ import main
 
 class TestMainTimestamp(unittest.TestCase):
     def setUp(self):
+        # Mock config
+        self.config_mock = MagicMock()
+        self.config_mock.PHONE_NUMBER_ID = "123"
+        self.config_mock.WHATSAPP_TOKEN = "abc"
+        self.config_mock.VERIFY_TOKEN = "verify"
+        self.config_mock.PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
+        self.config_mock.APP_SECRET = None # Disable security for these tests
+        self.config_mock.logger = MagicMock()
+
+        self.config_patcher = patch.dict(sys.modules, {'config': self.config_mock})
+        self.config_patcher.start()
+
         # Reload main to ensure it uses the mocked configuration
         importlib.reload(main)
 
@@ -54,6 +61,9 @@ class TestMainTimestamp(unittest.TestCase):
 
         # Setup Flask test client
         self.client = main.app.test_client()
+
+    def tearDown(self):
+        self.config_patcher.stop()
 
     def test_old_message_ignored(self):
         # Setup
