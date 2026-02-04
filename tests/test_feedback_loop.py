@@ -90,7 +90,8 @@ class TestFeedbackLoop(unittest.TestCase):
 
         # Patch dependencies
         with patch("brain._init_services", return_value=mock_llm_instance), \
-             patch("brain._manage_history", return_value="Historial"):
+             patch("brain._manage_history", return_value="Historial"), \
+             patch("brain._search_cars", return_value="Ignored"):
 
             # Inject mocks into brain
             brain._safety_model = mock_llm_instance
