@@ -5,6 +5,9 @@ import json
 import base64
 import urllib.parse
 import gunicorn
+import hmac
+import hashlib
+import secrets
 from google.cloud import pubsub_v1
 import config
 import brain
@@ -21,6 +24,14 @@ except Exception as e:
     publisher = None
 
 # --- Helper Functions (Shared) ---
+
+def verify_signature(payload, signature, secret):
+    """Verifies the X-Hub-Signature-256."""
+    try:
+        expected = 'sha256=' + hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        return secrets.compare_digest(signature, expected)
+    except Exception:
+        return False
 
 def send_whatsapp(phone, text):
     """Envío 'low-level' a la API de WhatsApp."""
@@ -217,6 +228,17 @@ def whatsapp_webhook():
 
     # 2. Recepción de Mensajes (POST)
     if request.method == "POST":
+        # HMAC Verification
+        is_verified = False
+        payload_bytes = request.get_data()
+        signature = request.headers.get("X-Hub-Signature-256")
+
+        if config.APP_SECRET and signature:
+            if not verify_signature(payload_bytes, signature, config.APP_SECRET):
+                config.logger.warning("⛔ Invalid HMAC signature")
+                return "Forbidden", 403
+            is_verified = True
+
         try:
             data = request.get_json()
 
@@ -241,6 +263,11 @@ def whatsapp_webhook():
                     config.logger.error(f"Error abriendo mensaje de Pub/Sub: {e}")
                     return "Bad Request", 400
             # ---------------------------------
+
+            # Si no es Pub/Sub y deberíamos verificar firma pero falló/faltó
+            if config.APP_SECRET and not is_verified:
+                config.logger.warning("⛔ Missing Signature on non-PubSub message")
+                return "Forbidden", 403
 
             # Lógica original para mensajes directos de WhatsApp
             entries = data.get('entry', [])
