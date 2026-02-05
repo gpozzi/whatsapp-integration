@@ -9,6 +9,7 @@ from google.cloud import pubsub_v1
 import config
 import brain
 import ingestor
+import security
 
 # --- FLASK APP INITIALIZATION ---
 app = Flask(__name__)
@@ -220,9 +221,19 @@ def whatsapp_webhook():
         try:
             data = request.get_json()
 
+            # Detectar si es mensaje de Pub/Sub (para bypass de firma)
+            is_pubsub = data and 'message' in data and 'data' in data['message']
+
+            # Security: Verificar Firma HMAC (Si está configurado APP_SECRET y NO es Pub/Sub)
+            if config.APP_SECRET and not is_pubsub:
+                signature = request.headers.get("X-Hub-Signature-256")
+                if not security.validate_signature(request.get_data(), signature, config.APP_SECRET):
+                    config.logger.warning("⛔ Security: Invalid WhatsApp signature.")
+                    return "Forbidden", 403
+
             # --- NUEVA LÓGICA PARA PUB/SUB ---
             # Si el mensaje viene de Google Pub/Sub (la caja)
-            if data and 'message' in data and 'data' in data['message']:
+            if is_pubsub:
                 try:
                     # 1. Abrimos la caja
                     decoded_data = base64.b64decode(data['message']['data']).decode('utf-8')
