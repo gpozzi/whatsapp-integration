@@ -1,4 +1,7 @@
 import ast
+import hmac
+import hashlib
+import secrets
 
 class SecurityError(Exception):
     """Excepción lanzada cuando se detecta código inseguro."""
@@ -60,3 +63,42 @@ def validate_python_code(code: str) -> None:
             if isinstance(node.func, ast.Name):
                 if node.func.id in ['eval', 'exec', 'open', '__import__']:
                     raise SecurityError(f"Función prohibida: '{node.func.id}'")
+
+def validate_signature(payload: bytes, signature: str, secret: str) -> bool:
+    """Valida la firma HMAC de una solicitud.
+
+    Args:
+        payload (bytes): El cuerpo crudo de la solicitud.
+        signature (str): La firma proporcionada en el header (ej: 'sha256=...').
+        secret (str): El secreto compartido (APP_SECRET).
+
+    Returns:
+        bool: True si la firma es válida, False en caso contrario.
+    """
+    if not secret:
+        # Si no hay secreto configurado, no podemos validar.
+        # Por defecto fallamos seguro o logueamos.
+        # Aquí retornamos False para obligar a configurar el secreto si se llama a esta función.
+        return False
+
+    if not signature:
+        return False
+
+    # Extraer el hash de la firma (quitar 'sha256=')
+    if signature.startswith('sha256='):
+        signature_hash = signature[7:]
+    else:
+        signature_hash = signature
+
+    try:
+        # Calcular HMAC-SHA256
+        expected_hash = hmac.new(
+            secret.encode('utf-8'),
+            payload,
+            hashlib.sha256
+        ).hexdigest()
+
+        # Comparar de forma segura contra ataques de tiempo
+        return secrets.compare_digest(expected_hash, signature_hash)
+    except Exception:
+        return False

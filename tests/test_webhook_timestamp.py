@@ -25,6 +25,7 @@ sys.modules['config'] = MagicMock()
 sys.modules['config'].PHONE_NUMBER_ID = "123"
 sys.modules['config'].WHATSAPP_TOKEN = "abc"
 sys.modules['config'].VERIFY_TOKEN = "verify"
+sys.modules['config'].APP_SECRET = None  # Disable signature verification for these tests
 sys.modules['config'].PUBSUB_TOPIC = "projects/my-project/topics/my-topic"
 sys.modules['config'].logger = MagicMock()
 
@@ -43,6 +44,9 @@ import main
 
 class TestMainTimestamp(unittest.TestCase):
     def setUp(self):
+        # Ensure APP_SECRET is None for these tests
+        sys.modules['config'].APP_SECRET = None
+
         # Reload main to ensure it uses the mocked configuration
         importlib.reload(main)
 
