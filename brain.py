@@ -24,6 +24,10 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+_tts_client: Optional[texttospeech.TextToSpeechClient] = None
+
+# Executor para tareas de fondo (Global)
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -47,8 +51,8 @@ def _init_services() -> ChatVertexAI:
     Raises:
         Exception: Si falla la inicialización de algún servicio.
     """
-    global _db_client, _safety_model, _embeddings_service
-    if _db_client and _safety_model and _embeddings_service:
+    global _db_client, _safety_model, _embeddings_service, _tts_client
+    if _db_client and _safety_model and _embeddings_service and _tts_client:
         # Si ya están inicializados, retornamos una nueva instancia del modelo de ventas
         # para asegurar frescura o reutilizar si se prefiere.
         # En este diseño, retornamos una nueva instancia para el agente principal.
@@ -84,6 +88,9 @@ def _init_services() -> ChatVertexAI:
             project=config.PROJECT_ID,
             location=MODEL_LOCATION
         )
+
+        # Servicio de TTS (Optimización: Instancia única)
+        _tts_client = texttospeech.TextToSpeechClient()
 
         _db_client = firestore.Client(project=config.PROJECT_ID, database=config.DATABASE_NAME)
         return llm
@@ -674,7 +681,13 @@ def _text_to_speech(text: str, gender: str) -> Optional[bytes]:
         Optional[bytes]: El audio en formato MP3.
     """
     try:
-        client = texttospeech.TextToSpeechClient()
+        # Usamos cliente global si existe, sino creamos uno (fallback)
+        if _tts_client:
+            client = _tts_client
+        else:
+            config.logger.warning("TTS client no inicializado, creando uno on-the-fly.")
+            client = texttospeech.TextToSpeechClient()
+
         input_text = texttospeech.SynthesisInput(text=text)
 
         # 1. Intento Principal (Voces Neurales)
