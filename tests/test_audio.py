@@ -28,6 +28,7 @@ class TestAudioFeatures(unittest.TestCase):
     def setUp(self):
         brain._db_client = MagicMock()
         brain._safety_model = MagicMock()
+        brain._tts_client = None
 
         # Re-bind brain imports to current mocks (fix for discover stale mocks)
         brain.ChatVertexAI = sys.modules["langchain_google_vertexai"].ChatVertexAI
@@ -109,6 +110,25 @@ class TestAudioFeatures(unittest.TestCase):
         self.assertEqual(result, b"generated_mp3_female")
         _, kwargs = mock_client_instance.synthesize_speech.call_args
         self.assertEqual(kwargs['voice'].name, "female-voice")
+
+    def test_text_to_speech_caching(self):
+        """Verify that TextToSpeechClient is reused."""
+        mock_client_instance = MagicMock()
+        brain.texttospeech.TextToSpeechClient.return_value = mock_client_instance
+
+        mock_response = MagicMock()
+        mock_response.audio_content = b"audio"
+        mock_client_instance.synthesize_speech.return_value = mock_response
+
+        # First call
+        brain._text_to_speech("Text1", "MALE")
+        # Second call
+        brain._text_to_speech("Text2", "MALE")
+
+        # Check constructor called once
+        brain.texttospeech.TextToSpeechClient.assert_called_once()
+        # Check synthesize called twice
+        self.assertEqual(mock_client_instance.synthesize_speech.call_count, 2)
 
     @patch('brain.HumanMessage')
     @patch('brain.ChatVertexAI') # Patch LLM constructor
