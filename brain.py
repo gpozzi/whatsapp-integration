@@ -24,6 +24,9 @@ import config
 _db_client: Optional[firestore.Client] = None
 _safety_model: Optional[ChatVertexAI] = None
 _embeddings_service: Optional[VertexAIEmbeddings] = None
+_tts_client: Optional[texttospeech.TextToSpeechClient] = None
+
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- CONSTANTES ---
 MODEL_SALES = "gemini-2.5-flash"
@@ -673,8 +676,12 @@ def _text_to_speech(text: str, gender: str) -> Optional[bytes]:
     Returns:
         Optional[bytes]: El audio en formato MP3.
     """
+    global _tts_client
     try:
-        client = texttospeech.TextToSpeechClient()
+        if not _tts_client:
+            _tts_client = texttospeech.TextToSpeechClient()
+
+        client = _tts_client
         input_text = texttospeech.SynthesisInput(text=text)
 
         # 1. Intento Principal (Voces Neurales)
